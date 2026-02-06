@@ -1,0 +1,1830 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Backrooms Horror Game</title>
+    <style>
+        body { margin: 0; padding: 0; background: #000; overflow: hidden; color: #fff; font-family: 'Courier New', monospace; user-select: none; }
+        canvas { display: block; width: 100%; height: 100%; cursor: none; }
+        
+        /* UI Container */
+        #ui { position: absolute; top: 10px; left: 10px; z-index: 10; pointer-events: none; width: 95%; display: flex; justify-content: space-between; align-items: flex-start; }
+        
+        /* Left UI */
+        .ui-left { display: flex; flex-direction: column; gap: 5px; }
+        #stamina-bar { width: 200px; height: 10px; border: 1px solid #444; background: #111; position: relative; }
+        #stamina-fill { width: 100%; height: 100%; background: #0f0; transition: width 0.1s; }
+        
+        #battery-wrapper { display: flex; align-items: center; gap: 10px; margin-top: 5px; }
+        #battery-icon { width: 20px; text-align: center; font-weight: bold; }
+        #battery-bar { width: 170px; height: 10px; border: 1px solid #444; background: #111; }
+        #battery-fill { width: 100%; height: 100%; background: #cc0; transition: width 0.1s; }
+
+        /* Minimap */
+        #minimap-container { width: 150px; height: 150px; border: 2px solid #333; background: rgba(0,0,0,0.8); position: relative; overflow: hidden; border-radius: 50%; }
+        #minimap-canvas { width: 100%; height: 100%; display: block; }
+
+        /* Overlays */
+        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; display: flex; align-items: center; justify-content: center; z-index: 20; flex-direction: column; cursor: pointer; }
+        #jumpscare-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 30; display: none; align-items: center; justify-content: center; overflow: hidden; }
+        
+        #msg { font-size: 24px; text-align: center; color: #a00; text-shadow: 0 0 5px #f00; line-height: 1.5; }
+        .hidden { display: none !important; }
+
+        /* Text Styles */
+        .hud-text { font-size: 14px; text-shadow: 1px 1px 0 #000; color: #ccc; }
+        .warn { color: #f00; animation: blink 1s infinite; }
+        @keyframes blink { 50% { opacity: 0.5; } }
+
+        #note-modal {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 60%;
+            max-width: 600px;
+            background: #f4e4bc;
+            color: #222;
+            padding: 30px;
+            border: 2px solid #533;
+            box-shadow: 0 0 50px #000;
+            text-align: center;
+            font-family: 'Courier New', monospace;
+            z-index: 100;
+        }
+        #note-text { font-size: 20px; margin-bottom: 20px; font-weight: bold; }
+        #note-hint { font-size: 12px; color: #555; text-transform: uppercase; }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    <div class="ui-left">
+        <div id="level-disp" class="hud-text">Level 0</div>
+        <div id="orbs-disp" class="hud-text">Notes: 0/0</div>
+        <div class="hud-text">Stamina:</div>
+        <div id="stamina-bar"><div id="stamina-fill"></div></div>
+        <div id="battery-wrapper">
+            <div id="battery-icon" class="hud-text">🔦</div>
+            <div id="battery-bar"><div id="battery-fill"></div></div>
+        </div>
+        <div class="hud-text" style="margin-top:5px; font-size:10px; color:#666;">[F] Flashlight</div>
+    </div>
+
+    <div id="minimap-container">
+        <canvas id="minimap-canvas"></canvas>
+    </div>
+    <div id="note-modal">
+        <div id="note-text"></div>
+        <div id="note-hint">Press Space to Close</div>
+    </div>
+</div>
+
+<div id="jumpscare-overlay">
+    <canvas id="scare-canvas"></canvas>
+</div>
+
+<div id="overlay">
+    <h1 style="color:#800; font-size:40px; text-transform:uppercase; letter-spacing:5px;">Labyrinth of Shadows</h1>
+    <p id="msg">Click to Enter</p>
+    <p style="color:#666; font-size:12px; margin-top:20px;">MOUSE: Look | WASD: Move | SHIFT: Sprint | F: Flashlight</p>
+    <p style="color:#444; font-size:12px;">Light attracts attention. Darkness hides you... mostly.</p>
+</div>
+
+<canvas id="game"></canvas>
+
+<script>
+/**
+ * CORE CONFIGURATION
+ */
+const SCREEN_WIDTH = 640;
+const SCREEN_HEIGHT = 360; 
+const FOV = 0.80; 
+const MOVE_SPEED = 3.0; 
+const SPRINT_SPEED = 6.0;
+const MOUSE_SENSITIVITY = 0.003;
+
+const STAMINA_DRAIN = 10.0; 
+const STAMINA_MAX = 100;
+
+const BATTERY_DRAIN = 5.0;     // Drains fully in ~12 seconds
+const BATTERY_RECHARGE = 0;  // No recharge
+const BATTERY_MAX = 100;
+
+const LEVEL_NOTES = [
+    [ // Level 0
+        "1. I don’t remember falling. One second there was a floor, the next there was this place. The air smells old, like it’s been waiting.",
+        "2. Yellow walls stretch forever, but they don’t repeat cleanly. Some stains feel familiar, like I’ve already passed them.",
+        "3. I saw something move in the corner of my eye. When I flashed it, it vanished.",
+        "4. The carpet is damp and warm in places. I don’t want to think about why.",
+        "5. I tried marking a wall to keep track of where I’ve been. Ten minutes later, the mark was gone.",
+        "6. Sometimes the buzzing stops all at once. The silence feels heavy, like something is standing very close.",
+        "7. I heard footsteps behind me. When I turned around, the hallway was longer than before.",
+        "8. There’s a room with a single chair facing the corner. The chair is clean, like it’s used often.",
+        "9. Don’t stare into the light fixtures. Reflections appear where glass shouldn’t be.",
+        "10. I think this place is learning how fast I walk."
+    ],
+    [ // Level 1
+        "1. The lights are gone now. I didn’t notice when they shut off, only when I missed them.",
+        "2. Concrete walls replace the yellow ones. They smell like rust and old rain.",
+        "3. Fog drags along the floor, swallowing my shoes. I keep feeling like I’ve stepped into something alive.",
+        "4. Machinery echoes through the halls. It sounds busy, but nothing here seems to serve a purpose.",
+        "5. My flashlight flickers when I slow down. It steadies when I run.",
+        "6. I found a supply crate wedged into a corner. It was empty, but the dust around it was disturbed.",
+        "7. The dark feels directional. Some hallways feel wrong before I even enter them.",
+        "8. I stood still to rest, just for a moment. Something brushed past me in the fog.",
+        "9. Oil pools on the ground in shapes that almost look deliberate. One reflected a face that smiled too late.",
+        "10. I don’t think the darkness is the absence of light. I think it’s something else entirely."
+    ],
+    [ // Level 2
+        "1. Heat hit me the moment I arrived. Breathing feels thick, like inhaling through fabric.",
+        "2. Pipes line every wall, ceiling, and floor. They vibrate softly, like they’re full.",
+        "3. Steam hisses from cracks without warning. The sound feels conversational.",
+        "4. The corridors are narrower here. My shoulders scrape metal no matter how careful I am.",
+        "5. The pipes are warm, but some pulse when I touch them. I pulled my hand away too late.",
+        "6. I swear something moved inside the pipes when I stopped walking. It kept pace with me afterward.",
+        "7. Sweat stings my eyes constantly. I don’t remember the last time I blinked comfortably.",
+        "8. I saw it squeeze through a gap between pipes. There was no sound, just motion.",
+        "9. The heat makes it hard to think straight. Thoughts slip away if I don’t write them down.",
+        "10. Steam burned my arm, but the pain lingered longer than it should have. The skin feels wrong.",
+        "11. Some pipes feel hollow when I knock on them. Others throb like they’re alive.",
+        "12. I heard breathing that wasn’t mine. It came from inside the walls.",
+        "13. The tunnels keep getting smaller. Standing feels like a mistake now.",
+        "14. I found scratches on the pipes at shoulder height. They look recent.",
+        "15. I don’t think this place wants me dead yet. I think it wants me tired."
+    ],
+    [ // Level 3
+        "1. The noise started before I saw anything. It never stops.",
+        "2. Brick walls and metal grates form tight corridors. Everything feels reinforced, like a cage.",
+        "3. Machines scream as they work, even when nothing is attached to them. The sound drills into my head.",
+        "4. I found a battery for my flashlight. It crumbled when I touched it.",
+        "5. The air smells like ozone and burning dust. My tongue tastes metallic.",
+        "6. I saw movement in the wiring overhead. The cables twitched like nerves.",
+        "7. Elevators exist here, but they don’t obey buttons. They stop when they feel like it.",
+        "8. I looked through a barred window. There was no outside, just white nothing.",
+        "9. Sparks fall from the ceiling in short bursts. They stop whenever I look up.",
+        "10. My ears ring constantly now. Sometimes the ringing sounds like footsteps.",
+        "11. I found a skeleton slumped against a wall. Its fingers were melted into the floor.",
+        "12. The thing doesn’t stalk here. It rushes, then vanishes.",
+        "13. I felt something pass through me without touching my skin. The machines screamed louder afterward.",
+        "14. The noise follows me. I don’t think it’s coming from the room anymore.",
+        "15. I would give anything for silence. I don’t think silence exists here."
+    ],
+    [ // Level 4
+        "1. It looks like an office building. Clean carpet, straight hallways, normal lighting.",
+        "2. The quiet is unbearable after Level 3. My ears still ring, but nothing answers back.",
+        "3. The windows are black, glossy like mirrors. I avoid seeing myself in them.",
+        "4. I hear rain tapping against the glass. There is no outside.",
+        "5. I found a water cooler in a break room. The water tasted sweet at first.",
+        "6. After a second sip, my mouth went numb. I stopped drinking immediately.",
+        "7. Cubicles stretch endlessly, arranged too perfectly. No personal items, no clutter.",
+        "8. I found a desk with papers neatly stacked. Every page was blank.",
+        "9. Phones ring occasionally. They stop if I get too close.",
+        "10. I answered one. Something breathed on the other end, slow and satisfied.",
+        "11. The thing is still here. I feel it most when I slow down.",
+        "12. Writing feels harder now. Words slip away faster than before.",
+        "13. The water cooler is thicker today. It ripples when I’m not looking at it.",
+        "14. I saw movement under the carpet. The fibers settled too slowly.",
+        "15. A meeting room had a whiteboard. Someone wrote “RUN” and erased it halfway.",
+        "16. The windows changed. They show a city burning, or maybe just glowing.",
+        "17. I sat down in a chair for a moment. Standing back up felt wrong.",
+        "18. I can’t remember what my voice sounds like. I tried speaking and startled myself.",
+        "19. I’m so tired. The chairs look comfortable here.",
+        "20. If you find this, don’t rest. This level is where you stop leaving."
+    ]
+];
+
+const LEVEL_STYLES = [
+    { // Level 0: The Lobby (Mono-Yellow)
+        name: "Level 0: The Lobby",
+        wall: [210, 190, 120], wallDark: [160, 140, 90],
+        ceil: ['#1a1a10', '#444433'], floor: ['#444433', '#222211'],
+        hum: 60
+    },
+    { // Level 1: Habitable Zone (Industrial Grey)
+        name: "Level 1: Habitable Zone",
+        wall: [130, 130, 135], wallDark: [90, 90, 95],
+        ceil: ['#101010', '#202020'], floor: ['#202020', '#101010'],
+        hum: 40 // Lower rumble
+    },
+    { // Level 2: Pipe Dreams (Rusty/Dark)
+        name: "Level 2: Pipe Dreams",
+        wall: [100, 80, 60], wallDark: [70, 50, 30],
+        ceil: ['#050500', '#1a1a00'], floor: ['#1a1a00', '#0a0a00'],
+        hum: 100 // Steam hiss
+    },
+    { // Level 3: Electrical Station
+        name: "Level 3: Electrical Station",
+        wall: [139, 69, 19], wallDark: [100, 40, 10], // Brick Red
+        ceil: ['#000000', '#1a1a1a'], floor: ['#2a2a2a', '#111111'], // Dark Concrete
+        hum: 150 // High voltage hum
+    },
+    { // Level 4: Abandoned Office
+        name: "Level 4: Abandoned Office",
+        wall: [200, 200, 210], wallDark: [150, 150, 160], // Office White/Grey
+        ceil: ['#dddddd', '#aaaaaa'], floor: ['#555555', '#333333'], // Carpet
+        hum: 45 // Quiet AC hum
+    }
+];
+
+// Game State
+let canvas, ctx;
+let miniCanvas, miniCtx;
+let lastTime = 0;
+let running = false;
+let mapWidth = 10;
+let mapHeight = 10;
+let worldMap = [];
+let visitedMap = []; // Fog of War
+let audioCtx = null;
+let gameOver = false;
+let masterFilter = null;
+let heartbeat = { osc: null, gain: null };
+let screenShake = 0;
+let exitPos = null;
+let exitOpen = false;
+let isPaused = false;
+let currentLevel = 0;
+let noteIndex = 0;
+
+// Player
+let posX = 0, posY = 0; 
+let dirX = -1, dirY = 0; 
+let planeX = 0, planeY = 0.66; 
+let stamina = STAMINA_MAX;
+let battery = BATTERY_MAX;
+let flashlightOn = true;
+let flashLightFlicker = 1.0;
+let headBobPhase = 0;
+let headBobOffset = 0;
+let noiseCanvas = null;
+let fear = 0;
+let lastEntityPos = { x: 0, y: 0 };
+
+// Input
+const keys = { w: false, a: false, s: false, d: false, shift: false };
+
+// Entities
+let orbs = [];
+let batteries = [];
+let props = [];
+let entities = [];
+let zBuffer = [];
+
+// Minimap State
+let enemyMapVisibleTimer = 0;
+let enemyMapVisible = false;
+
+window.onload = () => {
+    canvas = document.getElementById('game');
+    canvas.width = SCREEN_WIDTH;
+    canvas.height = SCREEN_HEIGHT;
+    ctx = canvas.getContext('2d', { alpha: false });
+    ctx.imageSmoothingEnabled = false;
+
+    miniCanvas = document.getElementById('minimap-canvas');
+    miniCanvas.width = 150;
+    miniCanvas.height = 150;
+    miniCtx = miniCanvas.getContext('2d');
+
+    // Pre-generate Noise Texture
+    noiseCanvas = document.createElement('canvas');
+    noiseCanvas.width = SCREEN_WIDTH;
+    noiseCanvas.height = SCREEN_HEIGHT;
+    const nCtx = noiseCanvas.getContext('2d');
+    const idata = nCtx.createImageData(SCREEN_WIDTH, SCREEN_HEIGHT);
+    for (let i = 0; i < idata.data.length; i += 4) {
+        const v = Math.random() * 255;
+        idata.data[i] = idata.data[i+1] = idata.data[i+2] = v;
+        idata.data[i+3] = 15; // Low alpha
+    }
+    nCtx.putImageData(idata, 0, 0);
+
+    // Input Listeners
+    window.addEventListener('keydown', (e) => handleKey(e.code, true));
+    window.addEventListener('keyup', (e) => handleKey(e.code, false));
+    
+    document.addEventListener('mousemove', handleMouseLook);
+    document.addEventListener('pointerlockchange', () => {
+        // Optional pause logic
+    });
+
+    window.addEventListener('resize', resize);
+    setupNewGame();
+    resize();
+};
+
+function resize() {
+    // Aspect ratio handled by CSS
+}
+
+function handleKey(code, state) {
+    if (code === 'Space' && state) {
+        if (isPaused) {
+            closeNote();
+            return;
+        }
+    }
+
+    if (code === 'KeyW') keys.w = state;
+    if (code === 'KeyS') keys.s = state;
+    if (code === 'KeyA') keys.a = state;
+    if (code === 'KeyD') keys.d = state;
+    if (code === 'ShiftLeft' || code === 'ShiftRight') keys.shift = state;
+    
+    // Toggle Flashlight on Press only
+    if (state && code === 'KeyF') {
+        if (battery > 0) {
+            flashlightOn = !flashlightOn;
+            playSound('click');
+        }
+    }
+}
+
+function handleMouseLook(e) {
+    if (document.pointerLockElement !== canvas || !running) return;
+
+    let rot = e.movementX * MOUSE_SENSITIVITY;
+    
+    let oldDirX = dirX;
+    dirX = dirX * Math.cos(rot) - dirY * Math.sin(rot);
+    dirY = oldDirX * Math.sin(rot) + dirY * Math.cos(rot);
+    
+    let oldPlaneX = planeX;
+    planeX = planeX * Math.cos(rot) - planeY * Math.sin(rot);
+    planeY = oldPlaneX * Math.sin(rot) + planeY * Math.cos(rot);
+}
+
+// ---------------- AUDIO SYSTEM ----------------
+
+let ambientOsc = null;
+let ambientGain = null;
+
+function initAudio() {
+    if (audioCtx) return;
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AudioContext();
+
+    // Master Filter (Lowpass for fear effect)
+    masterFilter = audioCtx.createBiquadFilter();
+    masterFilter.type = 'lowpass';
+    masterFilter.frequency.value = 22000;
+    masterFilter.connect(audioCtx.destination);
+
+    // Ambient Drone
+    ambientOsc = audioCtx.createOscillator();
+    ambientGain = audioCtx.createGain();
+    ambientOsc.type = 'sawtooth';
+    ambientOsc.frequency.setValueAtTime(LEVEL_STYLES[currentLevel % LEVEL_STYLES.length].hum, audioCtx.currentTime); 
+    ambientGain.gain.setValueAtTime(0.03, audioCtx.currentTime);
+    
+    // Modulation for uneasiness
+    let lfo = audioCtx.createOscillator();
+    lfo.frequency.value = 0.2; // Slow cycle
+    let lfoGain = audioCtx.createGain();
+    lfoGain.gain.value = 10;
+    lfo.connect(lfoGain);
+    lfoGain.connect(ambientOsc.frequency);
+    lfo.start();
+
+    ambientOsc.connect(ambientGain);
+    ambientGain.connect(masterFilter);
+    ambientOsc.start();
+
+    // Heartbeat
+    heartbeat.osc = audioCtx.createOscillator();
+    heartbeat.gain = audioCtx.createGain();
+    heartbeat.osc.type = 'sine';
+    heartbeat.osc.frequency.value = 1.2; // ~70bpm
+    heartbeat.gain.gain.value = 0;
+    heartbeat.osc.connect(heartbeat.gain);
+    heartbeat.gain.connect(masterFilter);
+    heartbeat.osc.start();
+}
+
+function initEntitySound(ent) {
+    if (!audioCtx || ent.sound) return;
+    
+    ent.sound = {
+        osc: audioCtx.createOscillator(),
+        panner: audioCtx.createStereoPanner(),
+        gain: audioCtx.createGain()
+    };
+    // Unsettling sound: Sawtooth with slight detune implication via logic later
+    ent.sound.osc.type = 'sawtooth';
+    ent.sound.osc.frequency.setValueAtTime(55 + Math.random() * 10, audioCtx.currentTime); 
+    ent.sound.osc.connect(ent.sound.gain);
+    ent.sound.gain.connect(ent.sound.panner);
+    ent.sound.panner.connect(masterFilter);
+    ent.sound.gain.gain.value = 0; 
+    ent.sound.osc.start();
+}
+
+function playSound(type) {
+    if (!audioCtx) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+
+    const t = audioCtx.currentTime;
+
+    if (type === 'orb') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(400, t);
+        osc.frequency.exponentialRampToValueAtTime(800, t + 0.1);
+        gain.gain.setValueAtTime(0.1, t);
+        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
+        osc.start();
+        osc.stop(t + 0.15);
+    } 
+    else if (type === 'click') {
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(200, t);
+        gain.gain.setValueAtTime(0.05, t);
+        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.05);
+        osc.start();
+        osc.stop(t + 0.05);
+    }
+    else if (type === 'jumpscare') {
+        // Harsh noise burst
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(100, t);
+        osc.frequency.linearRampToValueAtTime(800, t + 0.1); // Screech up
+        // Add a second osc for dissonance
+        const osc2 = audioCtx.createOscillator();
+        const gain2 = audioCtx.createGain();
+        osc2.type = 'square';
+        osc2.frequency.setValueAtTime(150, t);
+        osc2.frequency.linearRampToValueAtTime(750, t + 0.2);
+        osc2.connect(gain2);
+        gain2.connect(audioCtx.destination);
+        
+        gain.gain.setValueAtTime(0.0, t);
+        gain.gain.linearRampToValueAtTime(0.8, t + 0.05); // Spike volume
+        gain.gain.linearRampToValueAtTime(0, t + 1.0);
+        
+        gain2.gain.setValueAtTime(0.0, t);
+        gain2.gain.linearRampToValueAtTime(0.5, t + 0.05);
+        gain2.gain.linearRampToValueAtTime(0, t + 1.0);
+
+        osc.start(); osc.stop(t + 1.0);
+        osc2.start(); osc2.stop(t + 1.0);
+    }
+    else if (type === 'door') {
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(60, t);
+        osc.frequency.exponentialRampToValueAtTime(30, t + 1.5);
+        
+        gain.gain.setValueAtTime(0.1, t);
+        gain.gain.linearRampToValueAtTime(0.2, t + 0.2);
+        gain.gain.linearRampToValueAtTime(0, t + 1.5);
+        
+        osc.start(); osc.stop(t + 1.5);
+    }
+    else if (type === 'battery') {
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(400, t);
+        osc.frequency.exponentialRampToValueAtTime(600, t + 0.1);
+        gain.gain.setValueAtTime(0.05, t);
+        gain.gain.linearRampToValueAtTime(0, t + 0.1);
+        osc.start(); osc.stop(t + 0.1);
+    }
+    else if (type === 'decoy') {
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(140 + Math.random()*160, t);
+        gain.gain.setValueAtTime(0.05, t);
+        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+        
+        // Simple stereo pan based on random direction
+        const panner = audioCtx.createStereoPanner();
+        panner.pan.value = (Math.random() * 2) - 1;
+        gain.connect(panner);
+        panner.connect(masterFilter);
+        osc.start(); osc.stop(t + 0.2);
+        return; // Panner connected to filter, skip default connect
+    }
+}
+
+// ---------------- GAME LOGIC ----------------
+
+function hasLineOfSight(x1, y1, x2, y2) {
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist === 0) return true;
+
+    let stepX = dx / dist;
+    let stepY = dy / dist;
+    
+    // Check points along the line
+    for (let d = 0; d < dist; d += 0.4) {
+        let checkX = x1 + stepX * d;
+        let checkY = y1 + stepY * d;
+        if (worldMap[Math.floor(checkX)][Math.floor(checkY)] !== 0) {
+            return false; // Hit a wall
+        }
+    }
+    return true; // No walls
+}
+
+function setupNewGame() {
+    document.getElementById('overlay').onclick = () => startGame(true);
+    document.querySelector('#overlay h1').innerText = "The Backrooms";
+    document.getElementById('msg').innerHTML = `Click to Start`;
+    document.getElementById('jumpscare-overlay').style.display = 'none';
+}
+
+async function startGame(isNewGame) {
+    try {
+        await canvas.requestPointerLock();
+    } catch (e) { console.warn("Pointer lock failed"); }
+    
+    document.getElementById('overlay').classList.add('hidden');
+    initAudio();
+    
+    if (isNewGame) {
+        mapWidth = 10;
+        mapHeight = 10;
+        currentLevel = 0;
+        noteIndex = 0;
+        generateLevel();
+    }
+
+    if (!running) {
+        running = true;
+        gameOver = false;
+        lastTime = performance.now();
+        requestAnimationFrame(gameLoop);
+    }
+}
+
+function generateLevel() {
+    // Randomized Prim's Algorithm
+    const physicalWidth = mapWidth * 2 + 1;
+    const physicalHeight = mapHeight * 2 + 1;
+
+    worldMap = Array.from({ length: physicalWidth }, () => Array(physicalHeight).fill(1));
+    visitedMap = Array.from({ length: physicalWidth }, () => Array(physicalHeight).fill(false));
+    
+    const frontiers = []; // Stores walls as [from_cell_x, from_cell_y, to_cell_x, to_cell_y]
+
+    // 1. Pick a starting cell and mark it as part of the maze.
+    let startCX = Math.floor(Math.random() * mapWidth);
+    let startCY = Math.floor(Math.random() * mapHeight);
+    worldMap[startCX * 2 + 1][startCY * 2 + 1] = 0;
+
+    // 2. Add the walls of the cell to the frontier list.
+    const addFrontiers = (cx, cy) => {
+        const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+        for (const [dx, dy] of dirs) {
+            const ncx = cx + dx;
+            const ncy = cy + dy;
+            // Check if neighbor is within the logical grid
+            if (ncx >= 0 && ncx < mapWidth && ncy >= 0 && ncy < mapHeight) {
+                frontiers.push([cx, cy, ncx, ncy]);
+            }
+        }
+    };
+    addFrontiers(startCX, startCY);
+
+    // 3. While there are walls in the list:
+    while (frontiers.length > 0) {
+        // a. Pick a random wall from the list.
+        const randIndex = Math.floor(Math.random() * frontiers.length);
+        const [fromX, fromY, toX, toY] = frontiers.splice(randIndex, 1)[0];
+
+        // b. If the cell on the other side is not yet part of the maze, connect it.
+        if (worldMap[toX * 2 + 1][toY * 2 + 1] === 1) {
+            worldMap[toX * 2 + 1][toY * 2 + 1] = 0; // Mark cell as passage
+            worldMap[fromX * 2 + 1 + (toX - fromX)][fromY * 2 + 1 + (toY - fromY)] = 0; // Break wall
+            addFrontiers(toX, toY); // Add new frontiers
+        }
+    }
+
+    // Add loops
+    const loopsToAdd = Math.floor((mapWidth * mapHeight) * 0.15);
+    let added = 0;
+    for (let i = 0; i < loopsToAdd * 5 && added < loopsToAdd; i++) {
+        const x = Math.floor(Math.random() * (physicalWidth - 2)) + 1;
+        const y = Math.floor(Math.random() * (physicalHeight - 2)) + 1;
+        if (worldMap[x][y] === 1) {
+            if (worldMap[x - 1][y] === 0 && worldMap[x + 1][y] === 0) {
+                worldMap[x][y] = 0; added++;
+            } else if (worldMap[x][y - 1] === 0 && worldMap[x][y + 1] === 0) {
+                worldMap[x][y] = 0; added++;
+            }
+        }
+    }
+
+    // Spawn Points
+    let emptySpots = [];
+    for (let x = 1; x < physicalWidth - 1; x++) {
+        for (let y = 1; y < physicalHeight - 1; y++) {
+            if (worldMap[x][y] === 0) emptySpots.push({x, y});
+        }
+    }
+
+    let pSpawn = emptySpots.splice(Math.floor(Math.random() * emptySpots.length), 1)[0];
+    posX = pSpawn.x + 0.5;
+    posY = pSpawn.y + 0.5;
+
+    // Exit Spawn
+    if (emptySpots.length > 0) {
+        let ex = emptySpots.splice(Math.floor(Math.random() * emptySpots.length), 1)[0];
+        exitPos = { x: ex.x + 0.5, y: ex.y + 0.5 };
+    }
+
+    // Entity Spawn (Multiple based on level)
+    // Cleanup old sounds
+    entities.forEach(e => {
+        if (e.sound) {
+            try { e.sound.osc.stop(); e.sound.osc.disconnect(); } catch(err){}
+        }
+    });
+    entities = [];
+
+    let numEntities = currentLevel + 1;
+    
+    for (let i = 0; i < numEntities; i++) {
+        if (emptySpots.length > 0) {
+            // Random spawn, but they start dormant or far away
+            let idx = Math.floor(Math.random() * emptySpots.length);
+            let eSpawn = emptySpots.splice(idx, 1)[0];
+            
+            let ent = { 
+                x: eSpawn.x + 0.5, 
+                y: eSpawn.y + 0.5, 
+                speed: 1.0 + (currentLevel * 0.1), 
+                sound: null,
+                retreatTimer: 0,
+                aggro: 0,
+                pathTimer: 0,
+                currentPath: [],
+                opacity: 0, // Start invisible (dormant)
+                dormantTimer: 5 + Math.random() * 40, // Unpredictable start delay
+                lightExposure: 0, // Resistance to light
+                id: i
+            };
+            initEntitySound(ent);
+            entities.push(ent);
+        }
+    }
+
+    // Determine facing direction based on open neighbors
+    const cx = Math.floor(posX);
+    const cy = Math.floor(posY);
+    const directions = [
+        { dx: 1, dy: 0 }, { dx: -1, dy: 0 }, 
+        { dx: 0, dy: 1 }, { dx: 0, dy: -1 }
+    ];
+    // Shuffle
+    for (let i = directions.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [directions[i], directions[j]] = [directions[j], directions[i]];
+    }
+    
+    dirX = -1; dirY = 0; // Default
+    for (let d of directions) {
+        if (worldMap[cx + d.dx] && worldMap[cx + d.dx][cy + d.dy] === 0) {
+            dirX = d.dx; dirY = d.dy;
+            break;
+        }
+    }
+    planeX = -dirY * 0.66; 
+    planeY = dirX * 0.66;
+
+    stamina = STAMINA_MAX;
+    battery = BATTERY_MAX;
+    flashlightOn = false;
+    exitOpen = false;
+
+    orbs = [];
+    batteries = [];
+    let orbCount = LEVEL_NOTES[currentLevel % LEVEL_NOTES.length].length;
+    for(let i=0; i<orbCount; i++) {
+        if(emptySpots.length > 0) {
+            let s = emptySpots.splice(Math.floor(Math.random() * emptySpots.length), 1)[0];
+            orbs.push({ x: s.x + 0.5, y: s.y + 0.5, active: true });
+        }
+    }
+
+    // Props (Random Items)
+    props = [];
+    let propCount = Math.floor(mapWidth * mapHeight * 0.08); 
+    const propTypes = ['chair', 'table', 'plant', 'lamp'];
+    for(let i=0; i<propCount; i++) {
+        if(emptySpots.length > 0) {
+            let s = emptySpots.splice(Math.floor(Math.random() * emptySpots.length), 1)[0];
+            let type = propTypes[Math.floor(Math.random() * propTypes.length)];
+            
+            let px = s.x + 0.5;
+            let py = s.y + 0.5;
+            
+            // Push props to sides if walls exist
+            let offsets = [];
+            if (worldMap[s.x-1][s.y] === 1) offsets.push({x: -0.35, y: 0});
+            if (worldMap[s.x+1][s.y] === 1) offsets.push({x: 0.35, y: 0});
+            if (worldMap[s.x][s.y-1] === 1) offsets.push({x: 0, y: -0.35});
+            if (worldMap[s.x][s.y+1] === 1) offsets.push({x: 0, y: 0.35});
+            
+            if (offsets.length > 0) {
+                let off = offsets[Math.floor(Math.random() * offsets.length)];
+                px += off.x + (Math.random() * 0.1 - 0.05);
+                py += off.y + (Math.random() * 0.1 - 0.05);
+            } else {
+                px += (Math.random() * 0.4 - 0.2);
+                py += (Math.random() * 0.4 - 0.2);
+            }
+            
+            props.push({ x: px, y: py, type: type });
+        }
+    }
+
+    // Batteries
+    let batCount = Math.max(2, Math.floor(mapWidth * mapHeight * 0.03));
+    for(let i=0; i<batCount; i++) {
+        if(emptySpots.length > 0) {
+            let s = emptySpots.splice(Math.floor(Math.random() * emptySpots.length), 1)[0];
+            let bx = s.x + 0.5 + (Math.random() * 0.4 - 0.2);
+            let by = s.y + 0.5 + (Math.random() * 0.4 - 0.2);
+            batteries.push({ x: bx, y: by, active: true });
+        }
+    }
+
+    updateUI();
+    
+    // Update Audio for Level
+    if (ambientOsc && audioCtx) {
+        let style = LEVEL_STYLES[currentLevel % LEVEL_STYLES.length];
+        ambientOsc.frequency.setTargetAtTime(style.hum, audioCtx.currentTime, 1.0);
+    }
+}
+
+// ---------------- JUMPSCARE ----------------
+
+function findPath(sx, sy, tx, ty) {
+    let start = {x: Math.floor(sx), y: Math.floor(sy)};
+    let target = {x: Math.floor(tx), y: Math.floor(ty)};
+    if (start.x === target.x && start.y === target.y) return [];
+
+    let queue = [start];
+    let cameFrom = {};
+    cameFrom[start.x + ',' + start.y] = null;
+    let dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+    let found = false;
+
+    while (queue.length > 0) {
+        let current = queue.shift();
+        if (current.x === target.x && current.y === target.y) {
+            found = true;
+            break;
+        }
+        for (let d of dirs) {
+            let next = {x: current.x + d[0], y: current.y + d[1]};
+            let key = next.x + ',' + next.y;
+            if (next.x >= 0 && next.x < worldMap.length && next.y >= 0 && next.y < worldMap[0].length && worldMap[next.x][next.y] === 0) {
+                if (!(key in cameFrom)) {
+                    queue.push(next);
+                    cameFrom[key] = current;
+                }
+            }
+        }
+    }
+
+    if (!found) return [];
+    let path = [];
+    let curr = target;
+    while (curr) {
+        if (curr.x === start.x && curr.y === start.y) break;
+        path.push([curr.x, curr.y]);
+        curr = cameFrom[curr.x + ',' + curr.y];
+    }
+    return path.reverse();
+}
+
+function triggerJumpscare() {
+    running = false;
+    document.exitPointerLock();
+    playSound('jumpscare');
+    
+    const scareOverlay = document.getElementById('jumpscare-overlay');
+    scareOverlay.style.display = 'flex';
+    
+    const sCanvas = document.getElementById('scare-canvas');
+    sCanvas.width = window.innerWidth;
+    sCanvas.height = window.innerHeight;
+    const sCtx = sCanvas.getContext('2d');
+    
+    let startTime = performance.now();
+    
+    function animateScare(time) {
+        let elapsed = time - startTime;
+        if (elapsed > 1200) {
+            scareOverlay.style.display = 'none';
+            triggerGameOver();
+            return;
+        }
+
+        sCanvas.width = window.innerWidth;
+        sCanvas.height = window.innerHeight;
+        
+        let cx = sCanvas.width / 2;
+        let cy = sCanvas.height / 2;
+
+        // Violent Shake
+        let shake = 20 + (elapsed / 1200) * 30;
+        let dx = (Math.random() - 0.5) * shake;
+        let dy = (Math.random() - 0.5) * shake;
+        
+        sCtx.save();
+        sCtx.translate(dx, dy);
+        
+        // Background - Flash Red occasionally
+        if (Math.random() < 0.15) {
+            sCtx.fillStyle = "#300";
+        } else {
+            sCtx.fillStyle = "#000";
+        }
+        sCtx.fillRect(0, 0, sCanvas.width, sCanvas.height);
+
+        // Zoom in
+        let scale = 1.0 + (elapsed / 1000) * 0.8;
+        sCtx.translate(cx, cy);
+        sCtx.scale(scale, scale);
+        sCtx.translate(-cx, -cy);
+
+        // THE SMILER
+        
+        // Eyes - Small, piercing, glowing
+        sCtx.shadowBlur = 30;
+        sCtx.shadowColor = "white";
+        sCtx.fillStyle = "#fff";
+        
+        sCtx.beginPath();
+        sCtx.arc(cx - 100, cy - 50, 15, 0, Math.PI*2); // Left
+        sCtx.arc(cx + 100, cy - 50, 15, 0, Math.PI*2); // Right
+        sCtx.fill();
+        sCtx.shadowBlur = 0;
+
+        // The Smile - Wide, U-shaped, filled with needle teeth
+        sCtx.strokeStyle = "#fff";
+        sCtx.lineWidth = 5;
+        
+        sCtx.beginPath();
+        sCtx.moveTo(cx - 250, cy + 50);
+        sCtx.bezierCurveTo(cx - 150, cy + 350, cx + 150, cy + 350, cx + 250, cy + 50);
+        sCtx.stroke();
+
+        // Teeth - Needle-like, messy
+        sCtx.fillStyle = "#fff";
+        sCtx.beginPath();
+        for (let i = 0; i < 40; i++) {
+            let t = i / 40;
+            let tx = (cx - 220) + t * 440;
+            let ty = cy + 280 - Math.sin(t * Math.PI) * 100; // Curve bottom
+            let h = 20 + Math.random() * 40;
+            sCtx.moveTo(tx, ty);
+            sCtx.lineTo(tx + 5, ty - h);
+            sCtx.lineTo(tx + 10, ty);
+            
+            // Top teeth
+            let ty2 = cy + 100 + Math.sin(t * Math.PI) * 50;
+            sCtx.moveTo(tx, ty2);
+            sCtx.lineTo(tx + 5, ty2 + h);
+            sCtx.lineTo(tx + 10, ty2);
+        }
+        sCtx.fill();
+
+        // Glitch lines
+        sCtx.fillStyle = "rgba(255, 255, 255, 0.1)";
+        for(let i=0; i<10; i++) {
+            let gy = Math.random() * sCanvas.height;
+            let gh = Math.random() * 50;
+            sCtx.fillRect(0, gy, sCanvas.width, gh);
+        }
+
+        sCtx.restore();
+        requestAnimationFrame(animateScare);
+    }
+    requestAnimationFrame(animateScare);
+}
+
+function triggerGameOver() {
+    gameOver = true;
+    const overlay = document.getElementById('overlay');
+    overlay.classList.remove('hidden');
+    document.querySelector('#overlay h1').innerText = "TAKEN";
+    document.getElementById('msg').innerHTML = `Don't let the light die.<br><span style="font-size:16px; color:#fff;">Click to try again.</span>`;
+    
+    entities.forEach(e => {
+        if (e.sound) {
+            e.sound.gain.gain.value = 0;
+        }
+    });
+    document.getElementById('note-modal').style.display = 'none';
+    setupNewGame();
+}
+
+// ---------------- GAME LOOP ----------------
+
+function gameLoop(timestamp) {
+    if (!running) return;
+
+    if (isPaused) {
+        lastTime = timestamp;
+        requestAnimationFrame(gameLoop);
+        return;
+    }
+
+    let dt = (timestamp - lastTime) / 1000;
+    lastTime = timestamp;
+    if (dt > 0.1) dt = 0.1;
+
+    update(dt);
+    draw();
+    drawMinimap();
+
+    if (running) requestAnimationFrame(gameLoop);
+}
+
+function update(dt) {
+    // 0. Flashlight & Stamina
+    if (flashlightOn) {
+        battery -= BATTERY_DRAIN * dt;
+        if (battery <= 0) {
+            battery = 0;
+            flashlightOn = false;
+        }
+        // Enhanced Flicker effect
+        if (battery < 35) {
+            let chance = (35 - battery) / 35;
+            if (Math.random() < chance * 0.05) {
+                // Deep flicker
+                flashLightFlicker = 0;
+            } else {
+                flashLightFlicker = Math.random() > 0.85 ? 0.25 : 1.0;
+            }
+        } else {
+            flashLightFlicker = Math.random() > 0.995 ? 0.2 : 1.0;
+        }
+    } else {
+        if (battery < BATTERY_MAX) battery += BATTERY_RECHARGE * dt;
+        flashLightFlicker = 0;
+    }
+
+    let isSprinting = keys.shift && stamina > 0;
+    if (!keys.shift && stamina < STAMINA_MAX) {
+        stamina += (STAMINA_DRAIN / 2) * dt;
+        if (stamina > STAMINA_MAX) stamina = STAMINA_MAX;
+    }
+    if (keys.shift) {
+        if (stamina > 0) {
+            stamina -= STAMINA_DRAIN * dt;
+            if (stamina < 0) stamina = 0;
+        }
+    }
+
+    // Head Bobbing
+    if (keys.w || keys.s || keys.a || keys.d) {
+        headBobPhase += dt * (isSprinting ? 18 : 12);
+        headBobOffset = Math.sin(headBobPhase) * 4; // 4 pixels up/down
+    } else {
+        headBobOffset = headBobOffset * 0.9; // Smoothly return to center
+        headBobPhase = 0;
+    }
+
+    // 1. Movement
+    let speed = (isSprinting ? SPRINT_SPEED : MOVE_SPEED) * dt;
+    if (keys.w) {
+        if(worldMap[Math.floor(posX + dirX * speed)][Math.floor(posY)] === 0) posX += dirX * speed;
+        if(worldMap[Math.floor(posX)][Math.floor(posY + dirY * speed)] === 0) posY += dirY * speed;
+    }
+    if (keys.s) {
+        if(worldMap[Math.floor(posX - dirX * speed)][Math.floor(posY)] === 0) posX -= dirX * speed;
+        if(worldMap[Math.floor(posX)][Math.floor(posY - dirY * speed)] === 0) posY -= dirY * speed;
+    }
+    let strafeDirX = -dirY;
+    let strafeDirY = dirX;
+    if (keys.a) {
+        if(worldMap[Math.floor(posX - strafeDirX * speed)][Math.floor(posY)] === 0) posX -= strafeDirX * speed;
+        if(worldMap[Math.floor(posX)][Math.floor(posY - strafeDirY * speed)] === 0) posY -= strafeDirY * speed;
+    }
+    if (keys.d) {
+        if(worldMap[Math.floor(posX + strafeDirX * speed)][Math.floor(posY)] === 0) posX += strafeDirX * speed;
+        if(worldMap[Math.floor(posX)][Math.floor(posY + strafeDirY * speed)] === 0) posY += strafeDirY * speed;
+    }
+
+    // Update Visited Map (Fog of War)
+    let px = Math.floor(posX);
+    let py = Math.floor(posY);
+    // Reveal radius 1
+    for(let xx = -1; xx <=1; xx++){
+        for(let yy = -1; yy <=1; yy++){
+            if (worldMap[px+xx] && worldMap[px+xx][py+yy] !== undefined) {
+                visitedMap[px+xx][py+yy] = true;
+            }
+        }
+    }
+
+    // 2. Orbs
+    let collectedThisFrame = false;
+    let activeOrbs = 0;
+    orbs.forEach(orb => {
+        if (orb.active) {
+            let dx = posX - orb.x;
+            let dy = posY - orb.y;
+            if (dx*dx + dy*dy < 0.25) { 
+                orb.active = false;
+                collectedThisFrame = true;
+                playSound('orb');
+                showNextNote();
+            } else {
+                activeOrbs++;
+            }
+        }
+    });
+    
+    if (collectedThisFrame) {
+        if (activeOrbs === 0) {
+            if (!exitOpen) {
+                exitOpen = true;
+                playSound('door');
+            }
+        } else {
+            updateUI();
+        }
+    }
+
+    // Batteries
+    batteries.forEach(b => {
+        if (b.active) {
+            let dx = posX - b.x;
+            let dy = posY - b.y;
+            if (dx*dx + dy*dy < 0.25) { 
+                b.active = false;
+                battery = Math.min(BATTERY_MAX, battery + 40);
+                playSound('battery');
+            }
+        }
+    });
+
+    // Check Exit
+    if (exitOpen && exitPos) {
+        let dx = posX - exitPos.x;
+        let dy = posY - exitPos.y;
+        if (dx*dx + dy*dy < 0.5) {
+            running = false;
+            entities.forEach(e => {
+                if (e.sound) {
+                    e.sound.gain.gain.value = 0;
+                    try { e.sound.osc.stop(); } catch(err) {}
+                }
+            });
+            document.exitPointerLock();
+            const overlay = document.getElementById('overlay');
+            overlay.classList.remove('hidden');
+            document.querySelector('#overlay h1').innerText = "ESCAPED";
+            document.getElementById('msg').innerHTML = `The shadow hungers still.<br><span style="font-size:16px; color:#fff;">Click to descend deeper.</span>`;
+            overlay.onclick = () => {
+                currentLevel++;
+                noteIndex = 0;
+                mapWidth += 5;
+                mapHeight += 5;
+                generateLevel();
+                startGame(false);
+            };
+            return;
+        }
+    }
+
+    // 3. Entity AI - Psychological
+    let maxFear = 0;
+
+    entities.forEach(entity => {
+        // Dormancy Logic (Long stretches of absence)
+        if (entity.dormantTimer > 0) {
+            entity.dormantTimer -= dt;
+            entity.opacity = 0;
+            if (entity.sound) entity.sound.gain.gain.value = 0;
+            
+            if (entity.dormantTimer <= 0) {
+                // Wake up: Teleport near player but (ideally) hidden
+                // This creates "Sudden Reintroduction"
+                let angle = Math.random() * Math.PI * 2;
+                let range = 10 + Math.random() * 10; // 10-20 units away
+                let tx = posX + Math.cos(angle) * range;
+                let ty = posY + Math.sin(angle) * range;
+                
+                // Clamp to map bounds
+                tx = Math.max(1, Math.min(mapWidth*2-1, tx));
+                ty = Math.max(1, Math.min(mapHeight*2-1, ty));
+                
+                if (worldMap[Math.floor(tx)][Math.floor(ty)] === 0) {
+                    entity.x = tx; entity.y = ty;
+                }
+                entity.opacity = 0; // Will fade in
+                entity.lightExposure = Math.max(0, entity.lightExposure - 3.0); // Recover some resistance
+            }
+            return; // Skip active logic
+        }
+
+        let dx = posX - entity.x;
+        let dy = posY - entity.y;
+        let dist = Math.sqrt(dx*dx + dy*dy);
+
+        if (dist < 8) {
+            let localFear = (1.0 - dist/8.0);
+            if (localFear > maxFear) maxFear = localFear;
+        }
+
+        const toEntityX = -dx / dist; 
+        const toEntityY = -dy / dist;
+        const dot = dirX * toEntityX + dirY * toEntityY;
+
+        let inFOV = dot > 0.7; // Roughly within screen bounds
+        let hasLOS = hasLineOfSight(posX, posY, entity.x, entity.y);
+        let isVisible = inFOV && hasLOS;
+
+        // Pathfinding Update
+        if (entity.pathTimer === undefined) entity.pathTimer = 0;
+        entity.pathTimer -= dt;
+        if (entity.pathTimer <= 0) {
+            entity.pathTimer = 0.5;
+            if (hasLineOfSight(entity.x, entity.y, posX, posY)) {
+                entity.currentPath = [];
+            } else {
+                entity.currentPath = findPath(entity.x, entity.y, posX, posY);
+            }
+        }
+
+        // BEHAVIOR LOGIC
+        let currentSpeed = 0;
+        
+        // Opacity Recovery (Fade back in if not being burned)
+        if (entity.opacity < 1.0 && (!isVisible || !flashlightOn)) {
+            entity.opacity = Math.min(1.0, entity.opacity + dt * 0.5);
+        }
+
+        if (entity.retreatTimer > 0) {
+            entity.retreatTimer -= dt;
+            currentSpeed = -1.5; // Back away
+        } else {
+            if (isVisible) {
+                if (flashlightOn) {
+                    // Undermine Rules: Light doesn't always stop it.
+                    // It builds resistance.
+                    entity.lightExposure += dt;
+                    
+                    // Resistance curve: 0 to 1.0 over ~6 seconds
+                    let resistance = Math.min(1.0, entity.lightExposure / 6.0);
+                    
+                    // If resistant, it moves. If not, it freezes.
+                    // It starts freezing, then twitches, then moves slowly.
+                    let freezeFactor = Math.max(0, 1.0 - resistance * 1.5); 
+                    currentSpeed = entity.speed * (1.0 - freezeFactor);
+
+                    // It still takes damage/fades out while in light, forcing a retreat eventually
+                    entity.opacity -= dt * 0.4; 
+                    
+                    if (entity.opacity <= 0) {
+                        // Burned away -> Retreat to Dormancy
+                        let validSpots = [];
+                        // ... (Simplified teleport logic)
+                        // Just set dormant
+                        entity.dormantTimer = 10 + Math.random() * 20;
+                        entity.opacity = 0;
+                        entity.x = 1; entity.y = 1; // Move away
+                        entity.currentPath = [];
+                        /*
+                        if (validSpots.length > 0) {
+                            let s = validSpots[Math.floor(Math.random() * validSpots.length)];
+                            entity.x = s.x + 0.5;
+                            entity.y = s.y + 0.5;
+                            entity.opacity = 0; // Start invisible at new spot
+                            entity.currentPath = [];
+                        } else {
+                            entity.opacity = 1.0; // No spot found, force reappear
+                        }*/
+                    }
+                } else {
+                    // Seen in dark: Creep slowly
+                    currentSpeed = 0.5;
+                    entity.lightExposure = Math.max(0, entity.lightExposure - dt * 0.5); // Recover slowly
+                    entity.aggro += dt;
+                }
+            } else {
+                // Not seen: Move FAST (Weeping Angel logic)
+                currentSpeed = 2.5;
+                
+                // Teleport logic if stuck or too far to create tension
+                if (dist > 15 && Math.random() < 0.005) {
+                    // Try to teleport closer but behind walls
+                    let angle = Math.random() * Math.PI * 2;
+                    let tx = posX + Math.cos(angle) * 8;
+                    let ty = posY + Math.sin(angle) * 8;
+                    
+                    let tileX = Math.floor(tx);
+                    let tileY = Math.floor(ty);
+
+                    if (tileX > 0 && tileX < worldMap.length && tileY > 0 && tileY < worldMap[0].length && 
+                        worldMap[tileX][tileY] === 0) {
+                            // Center spawn in tile to prevent wall clipping
+                            if (!hasLineOfSight(posX, posY, tileX + 0.5, tileY + 0.5)) {
+                                entity.x = tileX + 0.5;
+                                entity.y = tileY + 0.5;
+                            }
+                    }
+                }
+            }
+        }
+
+        // Apply movement
+        if (currentSpeed !== 0) {
+            let moveDirX = dx;
+            let moveDirY = dy;
+            let moveDist = dist;
+
+            // Use pathfinding if advancing (positive speed) and path exists
+            if (currentSpeed > 0 && entity.currentPath && entity.currentPath.length > 0) {
+                let nextNode = entity.currentPath[0];
+                let targetX = nextNode[0] + 0.5;
+                let targetY = nextNode[1] + 0.5;
+                
+                // Check if reached node
+                let distToNode = Math.sqrt((entity.x - targetX)**2 + (entity.y - targetY)**2);
+                if (distToNode < 0.1) {
+                    entity.currentPath.shift();
+                    if (entity.currentPath.length > 0) {
+                        nextNode = entity.currentPath[0];
+                        targetX = nextNode[0] + 0.5;
+                        targetY = nextNode[1] + 0.5;
+                    }
+                }
+                
+                moveDirX = targetX - entity.x;
+                moveDirY = targetY - entity.y;
+                moveDist = Math.sqrt(moveDirX*moveDirX + moveDirY*moveDirY);
+            }
+
+            if (moveDist > 0) {
+                let moveX = (moveDirX / moveDist) * currentSpeed * dt;
+                let moveY = (moveDirY / moveDist) * currentSpeed * dt;
+                
+                // Collision radius to prevent clipping through walls
+                let radius = 0.25;
+
+                let checkX = entity.x + moveX + (moveX > 0 ? radius : -radius);
+                if (worldMap[Math.floor(checkX)][Math.floor(entity.y)] === 0) entity.x += moveX;
+
+                let checkY = entity.y + moveY + (moveY > 0 ? radius : -radius);
+                if (worldMap[Math.floor(entity.x)][Math.floor(checkY)] === 0) entity.y += moveY;
+            }
+        }
+
+        // Minimap Uncertainty Logic
+        enemyMapVisibleTimer -= dt;
+        if (enemyMapVisibleTimer < 0) {
+            // Random interval to toggle visibility on minimap
+            enemyMapVisible = !enemyMapVisible;
+            enemyMapVisibleTimer = Math.random() * (enemyMapVisible ? 0.5 : 2.0); // Show brief, hide long
+        }
+        
+        // Jumpscare Distance
+        if (dist < 0.3) {
+            triggerJumpscare();
+            return;
+        }
+
+        // Audio Updates
+        if (entity.sound) {
+            let vol = 0;
+            if (dist < 10) {
+                vol = (1 - (dist / 10)); 
+                vol = vol * vol; // Distance falloff
+            }
+            entity.sound.gain.gain.setTargetAtTime(vol * 0.2, audioCtx.currentTime, 0.1);
+
+            // 3D Panning
+            let panX = dirX * dx + dirY * dy; // Forward/Back relative projection
+            let panY = planeX * dx + planeY * dy; // Left/Right relative projection
+            
+            // Web Audio Panner takes x,y,z. We map left/right to position x
+            // Normalizing: if object is directly right, panY is positive.
+            // We use simple stereo panning (-1 to 1)
+            // The logic in original code was slightly off for true stereo, simplified here:
+            // Calculate cross product for right/left determination
+            let cross = dirX * dy - dirY * dx;
+            entity.sound.panner.pan.value = Math.max(-1, Math.min(1, cross));
+        }
+    });
+
+    // Global Fear Effects
+    if (maxFear > fear) {
+        fear = Math.min(1.0, fear + dt * 0.5);
+    } else {
+        fear = Math.max(0, fear - dt * 0.1);
+    }
+
+    if (audioCtx && masterFilter) {
+        let cutoff = 22000 - (fear * 18000);
+        masterFilter.frequency.setTargetAtTime(cutoff, audioCtx.currentTime, 0.1);
+
+        let hbVol = 0.02 + (0.1 * fear);
+        let hbRate = 1.0 + (fear * 2.0); 
+        heartbeat.gain.gain.setTargetAtTime(fear > 0.1 ? hbVol : 0, audioCtx.currentTime, 0.1);
+        heartbeat.osc.frequency.setTargetAtTime(hbRate, audioCtx.currentTime, 0.1);
+    }
+    screenShake = Math.max(screenShake * 0.9, fear * 2.0);
+
+    updateUI(); 
+}
+
+function showNextNote() {
+    let notes = LEVEL_NOTES[currentLevel % LEVEL_NOTES.length];
+    if (noteIndex < notes.length) {
+        isPaused = true;
+        document.exitPointerLock();
+        const modal = document.getElementById('note-modal');
+        document.getElementById('note-text').innerText = notes[noteIndex];
+        modal.style.display = 'block';
+        noteIndex++;
+    }
+}
+
+function closeNote() {
+    document.getElementById('note-modal').style.display = 'none';
+    isPaused = false;
+    canvas.requestPointerLock();
+}
+
+function updateUI() {
+    document.getElementById('level-disp').innerText = LEVEL_STYLES[currentLevel % LEVEL_STYLES.length].name;
+    let activeOrbs = orbs.filter(o => o.active).length;
+    document.getElementById('orbs-disp').innerText = `Notes: ${activeOrbs}`;
+    
+    let sPct = (stamina / STAMINA_MAX) * 100;
+    let sBar = document.getElementById('stamina-fill');
+    sBar.style.width = sPct + '%';
+    sBar.style.background = stamina > 20 ? '#0f0' : '#f00';
+
+    let bPct = (battery / BATTERY_MAX) * 100;
+    let bBar = document.getElementById('battery-fill');
+    bBar.style.width = bPct + '%';
+    bBar.style.opacity = 1;
+}
+
+// ---------------- DRAWING ----------------
+
+function draw() {
+    // Background
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+
+    ctx.save();
+    // Screen Shake
+    if (screenShake > 0.1) {
+        let sx = (Math.random() - 0.5) * screenShake;
+        let sy = (Math.random() - 0.5) * screenShake;
+        ctx.translate(sx, sy);
+    }
+
+    let horizon = SCREEN_HEIGHT / 2 + headBobOffset;
+
+    // Get Current Level Style
+    let style = LEVEL_STYLES[currentLevel % LEVEL_STYLES.length];
+
+    // Ceiling
+    let ceilingGrad = ctx.createLinearGradient(0, 0, 0, horizon);
+    ceilingGrad.addColorStop(0, style.ceil[0]);
+    ceilingGrad.addColorStop(1, style.ceil[1]);
+    ctx.fillStyle = ceilingGrad;
+    ctx.fillRect(0, 0, SCREEN_WIDTH, horizon);
+    
+    // Floor
+    let floorGrad = ctx.createLinearGradient(0, horizon, 0, SCREEN_HEIGHT);
+    floorGrad.addColorStop(0, style.floor[0]);
+    floorGrad.addColorStop(1, style.floor[1]);
+    ctx.fillStyle = floorGrad;
+    ctx.fillRect(0, horizon, SCREEN_WIDTH, SCREEN_HEIGHT - horizon);
+
+    // Raycasting
+    zBuffer = new Array(SCREEN_WIDTH).fill(0);
+
+    for (let x = 0; x < SCREEN_WIDTH; x += 1) { // Optimization: Res 1
+        let cameraX = 2 * x / SCREEN_WIDTH - 1;
+        let rayDirX = dirX + planeX * cameraX;
+        let rayDirY = dirY + planeY * cameraX;
+
+        let mapX = Math.floor(posX);
+        let mapY = Math.floor(posY);
+
+        let sideDistX, sideDistY;
+        let deltaDistX = Math.abs(1 / rayDirX);
+        let deltaDistY = Math.abs(1 / rayDirY);
+        let perpWallDist;
+        let stepX, stepY, hit = 0, side;
+
+        if (rayDirX < 0) { stepX = -1; sideDistX = (posX - mapX) * deltaDistX; }
+        else { stepX = 1; sideDistX = (mapX + 1.0 - posX) * deltaDistX; }
+        if (rayDirY < 0) { stepY = -1; sideDistY = (posY - mapY) * deltaDistY; }
+        else { stepY = 1; sideDistY = (mapY + 1.0 - posY) * deltaDistY; }
+
+        while (hit === 0) {
+            if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; side = 0; } 
+            else { sideDistY += deltaDistY; mapY += stepY; side = 1; }
+            if (worldMap[mapX][mapY] > 0) hit = 1;
+        }
+
+        if (side === 0) perpWallDist = (mapX - posX + (1 - stepX) / 2) / rayDirX;
+        else           perpWallDist = (mapY - posY + (1 - stepY) / 2) / rayDirY;
+
+        zBuffer[x] = perpWallDist;
+
+        let lineHeight = Math.floor(SCREEN_HEIGHT / perpWallDist);
+        
+        // Glitch Effect (Vertical Shift based on Fear)
+        let glitchY = 0;
+        if (fear > 0.5 && Math.random() < (fear - 0.5) * 0.1) glitchY = (Math.random() - 0.5) * SCREEN_HEIGHT * 0.2;
+
+        let drawStart = -lineHeight / 2 + horizon + glitchY;
+        if (drawStart < 0) drawStart = 0;
+        let drawEnd = lineHeight / 2 + horizon + glitchY;
+        if (drawEnd >= SCREEN_HEIGHT) drawEnd = SCREEN_HEIGHT - 1;
+
+        // Lighting Calculation
+        // Wall Colors from Style
+        let baseR = style.wall[0], baseG = style.wall[1], baseB = style.wall[2];
+        if (side === 1) { baseR = style.wallDark[0]; baseG = style.wallDark[1]; baseB = style.wallDark[2]; }
+
+        // Distance Falloff (Fog)
+        let distFactor = 1.0 / (1.0 + perpWallDist * perpWallDist * (0.05 + fear * 0.15)); // Fog thickens with fear
+        
+        // Flashlight Logic
+        let lightFactor = 0.5; // Ambient darkness (Brighter)
+        if (flashlightOn) {
+            lightFactor = 1.0 * flashLightFlicker;
+        }
+
+        let r = baseR * distFactor * lightFactor;
+        let g = baseG * distFactor * lightFactor; 
+        let b = baseB * distFactor * lightFactor;
+
+        ctx.fillStyle = `rgb(${Math.floor(r)}, ${Math.floor(g)}, ${Math.floor(b)})`;
+        ctx.fillRect(x, drawStart, 1, drawEnd - drawStart);
+    }
+
+    // Sprite Rendering
+    let sprites = [];
+    orbs.forEach(o => { if (o.active) sprites.push({ x: o.x, y: o.y, type: 'orb' }); });
+    props.forEach(p => { sprites.push({ x: p.x, y: p.y, type: p.type }); });
+    batteries.forEach(b => { if (b.active) sprites.push({ x: b.x, y: b.y, type: 'battery' }); });
+    entities.forEach(e => { if(e.opacity > 0.01) sprites.push({ x: e.x, y: e.y, type: 'entity', obj: e }); });
+    if (exitPos && exitOpen) sprites.push({ x: exitPos.x, y: exitPos.y, type: 'exit' });
+
+    sprites.sort((a, b) => {
+        let da = (posX - a.x)*(posX - a.x) + (posY - a.y)*(posY - a.y);
+        let db = (posX - b.x)*(posX - b.x) + (posY - b.y)*(posY - b.y);
+        return db - da;
+    });
+
+    for (let i = 0; i < sprites.length; i++) {
+        let sprite = sprites[i];
+        let spriteX = sprite.x - posX;
+        let spriteY = sprite.y - posY;
+
+        // Entity Jitter (Vibrates when close)
+        if (sprite.type === 'entity') {
+            spriteX += (Math.random() - 0.5) * fear * 0.1;
+        }
+
+        let invDet = 1.0 / (planeX * dirY - dirX * planeY);
+        let transformX = invDet * (dirY * spriteX - dirX * spriteY);
+        let transformY = invDet * (-planeY * spriteX + planeX * spriteY); 
+
+        if (transformY <= 0) continue;
+
+        let spriteScreenX = Math.floor((SCREEN_WIDTH / 2) * (1 + transformX / transformY));
+        let spriteHeight = Math.abs(Math.floor(SCREEN_HEIGHT / transformY));
+        let spriteWidth = Math.abs(Math.floor(SCREEN_HEIGHT / transformY)); 
+
+        let drawStartY = -spriteHeight / 2 + horizon;
+        if (drawStartY < 0) drawStartY = 0;
+        let drawEndY = spriteHeight / 2 + horizon;
+        if (drawEndY >= SCREEN_HEIGHT) drawEndY = SCREEN_HEIGHT - 1;
+
+        let drawStartX = -spriteWidth / 2 + spriteScreenX;
+        let drawEndX = spriteWidth / 2 + spriteScreenX;
+
+        let startX = Math.floor(Math.max(0, drawStartX));
+        let endX = Math.floor(Math.min(SCREEN_WIDTH, drawEndX));
+
+        // Light check for sprite visibility
+        let spriteLight = flashlightOn ? 1.0 * flashLightFlicker : 0.4;
+
+        // Only draw if within buffer and lit enough (or glowing)
+        // Optimization: Don't draw individual pixels, draw strips
+        for (let stripe = startX; stripe < endX; stripe++) {
+            if (transformY < zBuffer[stripe]) {
+                let progress = (stripe - drawStartX) / spriteWidth; // 0 to 1 across sprite
+                
+                if (sprite.type === 'orb') {
+                     // Note Visuals (Floating Paper)
+                     let dx = progress - 0.5;
+                     if (Math.abs(dx) < 0.2) { // Width
+                        let noteH = spriteHeight * 0.5;
+                        let hover = Math.sin(Date.now() / 400) * (spriteHeight * 0.05);
+                        let noteY = drawStartY + (spriteHeight - noteH)/2 + hover;
+                        
+                        // Paper Background
+                        ctx.fillStyle = '#fdf5e6'; // Old Lace
+                        ctx.fillRect(stripe, noteY, 1, noteH);
+                        
+                        // Scribbles (Text)
+                        if (Math.abs(dx) < 0.15) {
+                            ctx.fillStyle = '#4a4a4a';
+                            // Draw 4 lines
+                            for(let k=1; k<=4; k++) {
+                                let ly = noteY + noteH * (0.2 * k);
+                                let lh = noteH * 0.05;
+                                ctx.fillRect(stripe, ly, 1, lh);
+                            }
+                        }
+                     }
+                }
+                else if (['chair', 'table', 'plant', 'lamp'].includes(sprite.type)) {
+                    let dx = progress - 0.5;
+                    let dim = flashlightOn ? 1.0 : 0.3;
+                    
+                    if (sprite.type === 'chair') {
+                        // Wooden Chair
+                        if (Math.abs(dx) < 0.35) {
+                            // Legs
+                            if ((Math.abs(dx) > 0.25) && (stripe % 4 !== 0)) { 
+                                 ctx.fillStyle = `rgb(${60*dim}, ${40*dim}, ${20*dim})`;
+                                 ctx.fillRect(stripe, drawStartY + spriteHeight * 0.5, 1, spriteHeight * 0.5);
+                            }
+                            // Seat
+                            ctx.fillStyle = `rgb(${80*dim}, ${50*dim}, ${30*dim})`;
+                            ctx.fillRect(stripe, drawStartY + spriteHeight * 0.5, 1, spriteHeight * 0.1);
+                            // Back
+                            if (Math.abs(dx) < 0.3 && (Math.floor(dx * 20) % 2 !== 0)) {
+                                // gap
+                            } else {
+                                ctx.fillStyle = `rgb(${70*dim}, ${45*dim}, ${25*dim})`;
+                                ctx.fillRect(stripe, drawStartY + spriteHeight * 0.1, 1, spriteHeight * 0.4);
+                            }
+                        }
+                    }
+                    else if (sprite.type === 'table') {
+                         // Table
+                         if ((Math.abs(dx) > 0.35 && Math.abs(dx) < 0.45)) {
+                             ctx.fillStyle = `rgb(${50*dim}, ${30*dim}, ${10*dim})`;
+                             ctx.fillRect(stripe, drawStartY + spriteHeight * 0.6, 1, spriteHeight * 0.4);
+                         }
+                         if (Math.abs(dx) < 0.5) {
+                             ctx.fillStyle = `rgb(${90*dim}, ${60*dim}, ${40*dim})`;
+                             ctx.fillRect(stripe, drawStartY + spriteHeight * 0.55, 1, spriteHeight * 0.1);
+                         }
+                    }
+                    else if (sprite.type === 'plant') {
+                        // Pot
+                        if (Math.abs(dx) < 0.2) {
+                            ctx.fillStyle = `rgb(${150*dim}, ${80*dim}, ${40*dim})`;
+                            ctx.fillRect(stripe, drawStartY + spriteHeight * 0.7, 1, spriteHeight * 0.3);
+                        }
+                        // Greenery
+                        if (Math.abs(dx) < 0.35) {
+                            let leafY = drawStartY + spriteHeight * 0.2;
+                            let leafH = spriteHeight * 0.5;
+                            if (Math.sin(dx * 30 + sprite.x * 10) > -0.2) {
+                                ctx.fillStyle = `rgb(${20*dim}, ${100*dim}, ${20*dim})`;
+                                ctx.fillRect(stripe, leafY, 1, leafH);
+                            }
+                        }
+                    }
+                    else if (sprite.type === 'lamp') {
+                        // Pole
+                        if (Math.abs(dx) < 0.05) {
+                            ctx.fillStyle = `rgb(${20*dim}, ${20*dim}, ${20*dim})`;
+                            ctx.fillRect(stripe, drawStartY + spriteHeight * 0.2, 1, spriteHeight * 0.8);
+                        }
+                        // Shade
+                        if (Math.abs(dx) < 0.25) {
+                            ctx.fillStyle = `rgb(${200*dim}, ${180*dim}, ${150*dim})`;
+                            ctx.fillRect(stripe, drawStartY + spriteHeight * 0.1, 1, spriteHeight * 0.2);
+                        }
+                    }
+                }
+                else if (sprite.type === 'battery') {
+                    let dx = progress - 0.5;
+                    if (Math.abs(dx) < 0.15) {
+                        // Battery Body
+                        let batY = drawStartY + spriteHeight * 0.85;
+                        let batH = spriteHeight * 0.1;
+                        
+                        ctx.fillStyle = '#3f3'; // Green body
+                        ctx.fillRect(stripe, batY, 1, batH);
+                        
+                        // Cap
+                        if (Math.abs(dx) < 0.05) {
+                            ctx.fillStyle = '#ccc'; // Silver cap
+                            ctx.fillRect(stripe, batY - spriteHeight * 0.015, 1, spriteHeight * 0.015);
+                        }
+                    }
+                }
+                else if (sprite.type === 'exit') {
+                    // Door Visuals
+                    let dx = progress - 0.5;
+                    if (Math.abs(dx) < 0.3) { // Door width
+                        if (exitOpen) {
+                            // Open: Glowing white/green portal
+                            ctx.fillStyle = `rgba(200, 255, 200, ${0.8 + Math.random()*0.2})`;
+                            ctx.fillRect(stripe, drawStartY, 1, drawEndY - drawStartY);
+                        } else {
+                            // Closed: Dark Red/Rusty
+                            ctx.fillStyle = '#311';
+                            ctx.fillRect(stripe, drawStartY, 1, drawEndY - drawStartY);
+                        }
+                    }
+                } 
+                else if (sprite.type === 'entity') {
+                    // ENTITY VISUALS - The "Smiler" (Updated to match Jumpscare)
+                    let ent = sprite.obj;
+                    let dx = progress - 0.5;
+                    let glow = flashlightOn ? 1.0 : (0.8 + Math.sin(Date.now()/100)*0.2);
+                    let entAlpha = (ent.opacity !== undefined) ? ent.opacity : 1.0;
+                    
+                    // Ghostly Body (Transparent & Noisy)
+                    let alpha = 0;
+                    if (Math.abs(dx) < 0.25) {
+                        // Soft falloff from center
+                        let fade = 1.0 - Math.pow(Math.abs(dx) / 0.25, 2);
+                        alpha = 0.85 * fade;
+                        // Static/Noise texture
+                        if (Math.random() < 0.3) alpha *= 0.5;
+                    }
+                    ctx.fillStyle = `rgba(0,0,0,${alpha * entAlpha})`;
+                    if (alpha > 0.05) {
+                        // Smoky edges (vertical jitter)
+                        let jitter = (Math.random() - 0.5) * spriteHeight * 0.03;
+                        ctx.fillRect(stripe, drawStartY + spriteHeight*0.1 + jitter, 1, spriteHeight*0.8);
+                    }
+
+                    // Eyes (Small, piercing, glowing)
+                    if (Math.abs(Math.abs(dx) - 0.09) < 0.02) {
+                         let yEye = drawStartY + 0.28 * spriteHeight;
+                         let hEye = 0.025 * spriteHeight; // Smaller, sharper
+                         ctx.fillStyle = `rgba(255, 255, 255, ${glow * entAlpha})`;
+                         ctx.fillRect(stripe, yEye, 1, hEye);
+                    }
+
+                    // Smile (Deep U-shape with needle teeth)
+                    if (Math.abs(dx) < 0.22) {
+                        let nx = dx / 0.22; // -1 to 1
+                        // Deep U-shape curve
+                        let smileCurve = 0.65 - 0.3 * (nx * nx) * (1.0 + fear * 0.5); 
+                        
+                        let mouthH = 0.15; // Total mouth height area
+                        let yMouthTop = drawStartY + (smileCurve - mouthH/2) * spriteHeight;
+                        let yMouthBot = drawStartY + (smileCurve + mouthH/2) * spriteHeight;
+                        
+                        // Needle Teeth (Sine wave approximation for spikes)
+                        let toothLen = (yMouthBot - yMouthTop) * 0.45;
+                        let toothShape = Math.abs(Math.sin(dx * 100)); // 0..1 spikes
+                        
+                        ctx.fillStyle = `rgba(255, 255, 255, ${glow * entAlpha})`;
+                        
+                        // Top Tooth
+                        let tH = toothLen * (0.2 + 0.8 * toothShape);
+                        ctx.fillRect(stripe, yMouthTop, 1, tH);
+                        
+                        // Bottom Tooth (Offset phase for gnashing look)
+                        let toothShapeBot = Math.abs(Math.sin(dx * 100 + Math.PI/2));
+                        let bH = toothLen * (0.2 + 0.8 * toothShapeBot);
+                        ctx.fillRect(stripe, yMouthBot - bH, 1, bH);
+                    }
+                }
+            }
+        }
+    }
+
+    // Flashlight / Vignette Overlay
+    if (flashlightOn) {
+        let grad = ctx.createRadialGradient(SCREEN_WIDTH/2, SCREEN_HEIGHT/2, 50, SCREEN_WIDTH/2, SCREEN_HEIGHT/2, SCREEN_HEIGHT * 0.85);
+        grad.addColorStop(0, 'rgba(0,0,0,0)');
+        grad.addColorStop(1, '#000');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+    } else {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+        ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+    }
+    
+    // Fear Vignette
+    if (fear > 0.2) {
+        ctx.fillStyle = `rgba(0,0,0,${(fear - 0.2) * 0.8})`;
+        ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+    }
+    ctx.restore();
+
+    // Film Grain Overlay
+    let noiseX = Math.floor(Math.random() * 100) - 50;
+    let noiseY = Math.floor(Math.random() * 100) - 50;
+    ctx.drawImage(noiseCanvas, noiseX, noiseY);
+}
+
+function drawMinimap() {
+    // Clear
+    miniCtx.fillStyle = '#000';
+    miniCtx.fillRect(0, 0, miniCanvas.width, miniCanvas.height);
+
+    // Use a fixed cell size for a consistent "Radar" zoom level
+    const cellSize = 8; 
+    const centerX = miniCanvas.width / 2;
+    const centerY = miniCanvas.height / 2;
+
+    miniCtx.save();
+    // Center the view on the player
+    miniCtx.translate(centerX, centerY);
+    
+    // Move the map so the player's position is at the center (0,0 relative to translation)
+    // We do NOT rotate the map (North-Up), we rotate the player icon instead.
+    miniCtx.translate(-posX * cellSize, -posY * cellSize);
+
+    for (let x = 0; x < worldMap.length; x++) {
+        for (let y = 0; y < worldMap[0].length; y++) {
+            // Draw walls if they have been visited
+            // visitedMap matches worldMap dimensions (physical coordinates)
+            if (visitedMap[x][y] && worldMap[x][y] === 1) {
+                miniCtx.fillStyle = '#444';
+                // +0.6 to prevent tiny gaps between cells due to sub-pixel rendering
+                miniCtx.fillRect(x * cellSize, y * cellSize, cellSize + 0.6, cellSize + 0.6);
+            }
+        }
+    }
+
+    // Orbs
+    orbs.forEach(o => {
+        if(o.active) {
+            miniCtx.fillStyle = '#ffeb3b'; // Paper Yellow
+            let sz = cellSize * 0.6;
+            miniCtx.fillRect(o.x * cellSize - sz/2, o.y * cellSize - sz/2, sz, sz);
+        }
+    });
+
+    // Batteries
+    batteries.forEach(b => {
+        if(b.active) {
+            miniCtx.fillStyle = '#0ff';
+            miniCtx.fillRect(b.x * cellSize - 2, b.y * cellSize - 2, 4, 4);
+        }
+    });
+
+    // Exit
+    if (exitPos && exitOpen) {
+        miniCtx.fillStyle = '#0f0';
+        // Draw a square for the door
+        miniCtx.fillRect((exitPos.x - 0.3) * cellSize, (exitPos.y - 0.3) * cellSize, cellSize * 0.6, cellSize * 0.6);
+    }
+
+    // Enemy (Uncertainty)
+    entities.forEach(ent => {
+        if (ent.opacity > 0.1 && enemyMapVisible) {
+            let jx = (Math.random() - 0.5) * 1.0;
+            let jy = (Math.random() - 0.5) * 1.0;
+            miniCtx.fillStyle = '#a00';
+            miniCtx.beginPath();
+            miniCtx.arc((ent.x + jx) * cellSize, (ent.y + jy) * cellSize, cellSize * 0.4, 0, Math.PI*2);
+            miniCtx.fill();
+        }
+    });
+
+    miniCtx.restore();
+
+    // Player Arrow
+    miniCtx.save();
+    miniCtx.translate(centerX, centerY);
+    
+    // Rotate the arrow to match player's look direction
+    miniCtx.rotate(Math.atan2(dirY, dirX));
+
+    miniCtx.fillStyle = '#0f0';
+    miniCtx.beginPath();
+    // Draw arrow pointing "Right" (0 radians), rotation handles the rest
+    miniCtx.moveTo(6, 0);
+    miniCtx.lineTo(-4, -4);
+    miniCtx.lineTo(-4, 4);
+    miniCtx.fill();
+    miniCtx.restore();
+    
+    // Vignette on minimap
+    let grad = miniCtx.createRadialGradient(centerX, centerY, 50, centerX, centerY, 75);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(1, 'rgba(0,0,0,1)');
+    miniCtx.fillStyle = grad;
+    miniCtx.fillRect(0,0,150,150);
+}
+</script>
+</body>
+</html>
