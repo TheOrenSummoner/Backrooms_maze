@@ -240,12 +240,18 @@ let audioCtx = null;
 let gameOver = false;
 let masterFilter = null;
 let heartbeat = { osc: null, gain: null };
+let flashlightHum = { osc: null, gain: null };
 let screenShake = 0;
 let exitPos = null;
 let exitOpen = false;
 let isPaused = false;
 let currentLevel = 0;
 let noteIndex = 0;
+let lastStableDir = { x: 0, y: 0 };
+let turnEventCooldown = 0;
+let pipeEmitters = [];
+let pipeMap = {};
+let steamParticles = [];
 
 // Player
 let posX = 0, posY = 0; 
@@ -359,6 +365,7 @@ function handleMouseLook(e) {
 
 let ambientOsc = null;
 let ambientGain = null;
+let noiseBuffer = null;
 
 function initAudio() {
     if (audioCtx) return;
@@ -400,6 +407,25 @@ function initAudio() {
     heartbeat.osc.connect(heartbeat.gain);
     heartbeat.gain.connect(masterFilter);
     heartbeat.osc.start();
+
+    // Flashlight Hum (Level 1+)
+    flashlightHum.osc = audioCtx.createOscillator();
+    flashlightHum.gain = audioCtx.createGain();
+    flashlightHum.osc.type = 'sine';
+    flashlightHum.osc.frequency.value = 60;
+    flashlightHum.gain.gain.value = 0;
+    flashlightHum.osc.connect(flashlightHum.gain);
+    flashlightHum.gain.connect(masterFilter);
+    flashlightHum.osc.start();
+
+    // White Noise Buffer for Steam
+    let bufferSize = audioCtx.sampleRate * 2; // 2 seconds
+    let buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+    let data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+    }
+    noiseBuffer = buffer;
 }
 
 function initEntitySound(ent) {
@@ -504,6 +530,39 @@ function playSound(type) {
         osc.start(); osc.stop(t + 0.2);
         return; // Panner connected to filter, skip default connect
     }
+    else if (type === 'distant_step') {
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(100, t);
+        osc.frequency.exponentialRampToValueAtTime(20, t + 0.3);
+        gain.gain.setValueAtTime(0.4, t);
+        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.4);
+        
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 300;
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(); osc.stop(t + 0.5);
+        return;
+    }
+    else if (type === 'steam') {
+        if (!noiseBuffer) return;
+        const src = audioCtx.createBufferSource();
+        src.buffer = noiseBuffer;
+        
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(800, t);
+        filter.frequency.linearRampToValueAtTime(100, t + 0.5);
+
+        gain.gain.setValueAtTime(0.15, t);
+        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.5);
+
+        src.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+        src.start(); src.stop(t + 0.5);
+        return;
+    }
 }
 
 // ---------------- GAME LOGIC ----------------
@@ -548,6 +607,8 @@ async function startGame(isNewGame) {
         mapHeight = 10;
         currentLevel = 0;
         noteIndex = 0;
+        lastStableDir = { x: -1, y: 0 };
+        turnEventCooldown = 0;
         generateLevel();
     }
 
@@ -566,54 +627,148 @@ function generateLevel() {
 
     worldMap = Array.from({ length: physicalWidth }, () => Array(physicalHeight).fill(1));
     visitedMap = Array.from({ length: physicalWidth }, () => Array(physicalHeight).fill(false));
+    pipeEmitters = [];
+    pipeMap = {};
+    steamParticles = [];
     
-    const frontiers = []; // Stores walls as [from_cell_x, from_cell_y, to_cell_x, to_cell_y]
+    if (currentLevel === 2) {
+        // Level 2: Pipe Dreams - Long Hallways (Recursive Backtracker with Inertia)
+        let stack = [];
+        let startX = Math.floor(Math.random() * mapWidth);
+        let startY = Math.floor(Math.random() * mapHeight);
+        let visited = Array.from({ length: mapWidth }, () => Array(mapHeight).fill(false));
+        
+        stack.push({x: startX, y: startY, dir: null});
+        visited[startX][startY] = true;
+        worldMap[startX * 2 + 1][startY * 2 + 1] = 0;
 
-    // 1. Pick a starting cell and mark it as part of the maze.
-    let startCX = Math.floor(Math.random() * mapWidth);
-    let startCY = Math.floor(Math.random() * mapHeight);
-    worldMap[startCX * 2 + 1][startCY * 2 + 1] = 0;
+        while (stack.length > 0) {
+            let current = stack[stack.length - 1];
+            let neighbors = [];
+            const dirs = [{dx: 0, dy: -1}, {dx: 0, dy: 1}, {dx: 1, dy: 0}, {dx: -1, dy: 0}];
 
-    // 2. Add the walls of the cell to the frontier list.
-    const addFrontiers = (cx, cy) => {
-        const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-        for (const [dx, dy] of dirs) {
-            const ncx = cx + dx;
-            const ncy = cy + dy;
-            // Check if neighbor is within the logical grid
-            if (ncx >= 0 && ncx < mapWidth && ncy >= 0 && ncy < mapHeight) {
-                frontiers.push([cx, cy, ncx, ncy]);
+            for (let d of dirs) {
+                let nx = current.x + d.dx;
+                let ny = current.y + d.dy;
+                if (nx >= 0 && nx < mapWidth && ny >= 0 && ny < mapHeight && !visited[nx][ny]) {
+                    neighbors.push({x: nx, y: ny, dir: d});
+                }
+            }
+
+            if (neighbors.length > 0) {
+                // Inertia: Sort to favor same direction
+                neighbors.sort((a, b) => {
+                    if (current.dir) {
+                        let aMatch = (a.dir.dx === current.dir.dx && a.dir.dy === current.dir.dy);
+                        let bMatch = (b.dir.dx === current.dir.dx && b.dir.dy === current.dir.dy);
+                        if (aMatch && !bMatch) return -1;
+                        if (!aMatch && bMatch) return 1;
+                    }
+                    return Math.random() - 0.5;
+                });
+
+                let next = neighbors[0];
+                // 90% chance to keep straight if available
+                if (current.dir && (next.dir.dx === current.dir.dx && next.dir.dy === current.dir.dy)) {
+                    if (Math.random() > 0.90) next = neighbors[Math.floor(Math.random() * neighbors.length)];
+                } else {
+                    next = neighbors[Math.floor(Math.random() * neighbors.length)];
+                }
+
+                worldMap[next.x * 2 + 1][next.y * 2 + 1] = 0;
+                worldMap[current.x * 2 + 1 + next.dir.dx][current.y * 2 + 1 + next.dir.dy] = 0;
+                visited[next.x][next.y] = true;
+                stack.push(next);
+            } else {
+                stack.pop();
             }
         }
-    };
-    addFrontiers(startCX, startCY);
 
-    // 3. While there are walls in the list:
-    while (frontiers.length > 0) {
-        // a. Pick a random wall from the list.
-        const randIndex = Math.floor(Math.random() * frontiers.length);
-        const [fromX, fromY, toX, toY] = frontiers.splice(randIndex, 1)[0];
+        // Generate Pipe Emitters
+        for(let x=0; x<physicalWidth; x++) {
+            for(let y=0; y<physicalHeight; y++) {
+                if (worldMap[x][y] === 1) {
+                    let isVent = Math.random() < 0.2; // 20% chance to be a steam vent
+                    let emitter = {
+                        x: x, y: y,
+                        phase: Math.random() * Math.PI * 2,
+                        speed: 2 + Math.random() * 8,
+                        vent: isVent,
+                        ventTimer: Math.random() * 5
+                    };
+                    pipeEmitters.push(emitter);
+                    pipeMap[x + ',' + y] = emitter;
+                }
+            }
+        }
+    } else {
+        // Levels 0, 1, 3, 4: Prim's Algorithm
+        const frontiers = [];
+        let startCX = Math.floor(Math.random() * mapWidth);
+        let startCY = Math.floor(Math.random() * mapHeight);
+        worldMap[startCX * 2 + 1][startCY * 2 + 1] = 0;
 
-        // b. If the cell on the other side is not yet part of the maze, connect it.
-        if (worldMap[toX * 2 + 1][toY * 2 + 1] === 1) {
-            worldMap[toX * 2 + 1][toY * 2 + 1] = 0; // Mark cell as passage
-            worldMap[fromX * 2 + 1 + (toX - fromX)][fromY * 2 + 1 + (toY - fromY)] = 0; // Break wall
-            addFrontiers(toX, toY); // Add new frontiers
+        const addFrontiers = (cx, cy) => {
+            const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+            for (const [dx, dy] of dirs) {
+                const ncx = cx + dx;
+                const ncy = cy + dy;
+                if (ncx >= 0 && ncx < mapWidth && ncy >= 0 && ncy < mapHeight) {
+                    frontiers.push([cx, cy, ncx, ncy]);
+                }
+            }
+        };
+        addFrontiers(startCX, startCY);
+
+        while (frontiers.length > 0) {
+            const randIndex = Math.floor(Math.random() * frontiers.length);
+            const [fromX, fromY, toX, toY] = frontiers.splice(randIndex, 1)[0];
+
+            if (worldMap[toX * 2 + 1][toY * 2 + 1] === 1) {
+                worldMap[toX * 2 + 1][toY * 2 + 1] = 0;
+                worldMap[fromX * 2 + 1 + (toX - fromX)][fromY * 2 + 1 + (toY - fromY)] = 0;
+                addFrontiers(toX, toY);
+            }
         }
     }
 
-    // Add loops
-    const loopsToAdd = Math.floor((mapWidth * mapHeight) * 0.15);
+    // Loops & Rooms
+    let loopChance = 0.15;
+    if (currentLevel === 0) loopChance = 0.25; // More chaotic
+    if (currentLevel === 2) loopChance = 0.05; // More linear
+    
+    const loopsToAdd = Math.floor((mapWidth * mapHeight) * loopChance);
     let added = 0;
-    for (let i = 0; i < loopsToAdd * 5 && added < loopsToAdd; i++) {
+    for (let i = 0; i < loopsToAdd * 10 && added < loopsToAdd; i++) {
         const x = Math.floor(Math.random() * (physicalWidth - 2)) + 1;
         const y = Math.floor(Math.random() * (physicalHeight - 2)) + 1;
         if (worldMap[x][y] === 1) {
-            if (worldMap[x - 1][y] === 0 && worldMap[x + 1][y] === 0) {
-                worldMap[x][y] = 0; added++;
-            } else if (worldMap[x][y - 1] === 0 && worldMap[x][y + 1] === 0) {
-                worldMap[x][y] = 0; added++;
-            }
+            let neighbors = 0;
+            if (worldMap[x-1][y] === 0) neighbors++;
+            if (worldMap[x+1][y] === 0) neighbors++;
+            if (worldMap[x][y-1] === 0) neighbors++;
+            if (worldMap[x][y+1] === 0) neighbors++;
+            if (neighbors >= 2) { worldMap[x][y] = 0; added++; }
+        }
+    }
+
+    // Level 4: Office Rooms
+    if (currentLevel === 4) {
+        let roomCount = Math.max(3, Math.floor(mapWidth * mapHeight * 0.02));
+        for(let k=0; k<roomCount; k++) {
+             let rw = Math.floor(Math.random() * 3) + 2; 
+             let rh = Math.floor(Math.random() * 3) + 2;
+             let rx = Math.floor(Math.random() * (mapWidth - rw));
+             let ry = Math.floor(Math.random() * (mapHeight - rh));
+             for(let xx=0; xx<rw; xx++) {
+                 for(let yy=0; yy<rh; yy++) {
+                     let px = (rx+xx)*2 + 1;
+                     let py = (ry+yy)*2 + 1;
+                     worldMap[px][py] = 0;
+                     if (xx < rw-1) worldMap[px+1][py] = 0;
+                     if (yy < rh-1) worldMap[px][py+1] = 0;
+                 }
+             }
         }
     }
 
@@ -693,6 +848,7 @@ function generateLevel() {
     }
     planeX = -dirY * 0.66; 
     planeY = dirX * 0.66;
+    lastStableDir = { x: dirX, y: dirY };
 
     stamina = STAMINA_MAX;
     battery = BATTERY_MAX;
@@ -926,6 +1082,32 @@ function triggerGameOver() {
     setupNewGame();
 }
 
+function elongateCorridor() {
+    // Determine "behind" direction (grid aligned)
+    let backX = 0, backY = 0;
+    if (Math.abs(dirX) > Math.abs(dirY)) {
+        backX = dirX > 0 ? -1 : 1;
+    } else {
+        backY = dirY > 0 ? -1 : 1;
+    }
+
+    let px = Math.floor(posX);
+    let py = Math.floor(posY);
+    let modified = false;
+
+    for(let i=1; i<=3; i++) {
+        let tx = px + backX * i;
+        let ty = py + backY * i;
+        if (tx > 0 && tx < worldMap.length - 1 && ty > 0 && ty < worldMap[0].length - 1) {
+            if (worldMap[tx][ty] === 1) {
+                worldMap[tx][ty] = 0;
+                modified = true;
+            }
+        }
+    }
+    if (modified) playSound('distant_step');
+}
+
 // ---------------- GAME LOOP ----------------
 
 function gameLoop(timestamp) {
@@ -949,31 +1131,121 @@ function gameLoop(timestamp) {
 }
 
 function update(dt) {
+    // Level 0: Turn Around Event
+    if (currentLevel === 0 && turnEventCooldown <= 0) {
+        const dot = dirX * lastStableDir.x + dirY * lastStableDir.y;
+        if (dot > 0.5) {
+            // Update stable direction to track slow turns
+            lastStableDir.x = dirX;
+            lastStableDir.y = dirY;
+        } else if (dot < -0.8) {
+            // Turned around
+            if (Math.random() < 0.25) { 
+                 elongateCorridor();
+                 turnEventCooldown = 10.0; 
+            }
+            lastStableDir.x = dirX;
+            lastStableDir.y = dirY;
+        }
+    }
+    if (turnEventCooldown > 0) turnEventCooldown -= dt;
+
+    // Level 2: Pipe Logic
+    if (currentLevel === 2) {
+        pipeEmitters.forEach(p => {
+            p.phase += dt * p.speed;
+            if (p.vent) {
+                let dist = Math.sqrt((posX - (p.x+0.5))**2 + (posY - (p.y+0.5))**2);
+                if (dist < 6) {
+                    p.ventTimer -= dt;
+                    if (p.ventTimer <= 0) {
+                        p.ventTimer = 1.5 + Math.random() * 3;
+                        playSound('steam');
+                        // Spawn Steam
+                        for(let i=0; i<8; i++) {
+                            steamParticles.push({
+                                x: p.x + 0.5 + (Math.random()-0.5)*0.2,
+                                y: p.y + 0.5 + (Math.random()-0.5)*0.2,
+                                z: 0.2 + Math.random() * 0.5, // Start height
+                                vx: (Math.random()-0.5)*0.4,
+                                vy: (Math.random()-0.5)*0.4,
+                                vz: 0.3 + Math.random() * 0.4, // Rise
+                                life: 1.0 + Math.random(),
+                                maxLife: 2.0,
+                                size: 0.4 + Math.random() * 0.4
+                            });
+                        }
+                    }
+                }
+            }
+        });
+
+        for (let i = steamParticles.length - 1; i >= 0; i--) {
+            let sp = steamParticles[i];
+            sp.x += sp.vx * dt; sp.y += sp.vy * dt; sp.z += sp.vz * dt;
+            sp.life -= dt; sp.size += dt * 0.6;
+            if (sp.life <= 0 || sp.z > 1.0) steamParticles.splice(i, 1);
+        }
+    }
+
     // 0. Flashlight & Stamina
+    let isSprinting = keys.shift && stamina > 0;
+    let speedRatio = 0;
+    if (keys.w || keys.s || keys.a || keys.d) {
+        speedRatio = isSprinting ? 1.0 : 0.5;
+    }
+
     if (flashlightOn) {
         battery -= BATTERY_DRAIN * dt;
         if (battery <= 0) {
             battery = 0;
             flashlightOn = false;
         }
-        // Enhanced Flicker effect
+        
+        let baseFlicker = 1.0;
+
+        // Level 1+ Dynamic Jitter (Inverse to speed)
+        if (currentLevel >= 1) {
+            let jitterIntensity = (1.0 - speedRatio); 
+            let t = performance.now();
+            // Slow interference pattern for "breathing" light
+            let noise = (Math.sin(t * 0.008) + Math.sin(t * 0.025)) * 0.5 + 0.5; 
+            let deviation = jitterIntensity * 0.35; 
+            
+            baseFlicker = 1.0 - (noise * deviation);
+
+            // Audio Feedback
+            if (audioCtx && flashlightHum.gain) {
+                let vol = 0.01 + (jitterIntensity * 0.04 * noise);
+                flashlightHum.gain.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.1);
+                let pitch = 50 + (jitterIntensity * 10 * noise) + (Math.random() * 5);
+                flashlightHum.osc.frequency.setTargetAtTime(pitch, audioCtx.currentTime, 0.1);
+            }
+        } else {
+            if (audioCtx && flashlightHum.gain) flashlightHum.gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
+        }
+
+        // Low Battery Override
         if (battery < 35) {
             let chance = (35 - battery) / 35;
             if (Math.random() < chance * 0.05) {
-                // Deep flicker
                 flashLightFlicker = 0;
             } else {
-                flashLightFlicker = Math.random() > 0.85 ? 0.25 : 1.0;
+                flashLightFlicker = (Math.random() > 0.85 ? 0.25 : 1.0) * baseFlicker;
             }
         } else {
-            flashLightFlicker = Math.random() > 0.995 ? 0.2 : 1.0;
+            if (currentLevel < 1) {
+                flashLightFlicker = Math.random() > 0.995 ? 0.2 : 1.0;
+            } else {
+                flashLightFlicker = baseFlicker;
+            }
         }
     } else {
         if (battery < BATTERY_MAX) battery += BATTERY_RECHARGE * dt;
         flashLightFlicker = 0;
+        if (audioCtx && flashlightHum.gain) flashlightHum.gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
     }
 
-    let isSprinting = keys.shift && stamina > 0;
     if (!keys.shift && stamina < STAMINA_MAX) {
         stamina += (STAMINA_DRAIN / 2) * dt;
         if (stamina > STAMINA_MAX) stamina = STAMINA_MAX;
@@ -1457,6 +1729,30 @@ function draw() {
         let baseR = style.wall[0], baseG = style.wall[1], baseB = style.wall[2];
         if (side === 1) { baseR = style.wallDark[0]; baseG = style.wallDark[1]; baseB = style.wallDark[2]; }
 
+        // Level 2: Vertical Pipes (Texture Mod)
+        if (currentLevel === 2) {
+            let wallX;
+            if (side === 0) wallX = posY + perpWallDist * rayDirY;
+            else           wallX = posX + perpWallDist * rayDirX;
+            wallX -= Math.floor(wallX);
+
+            // Look up emitter
+            let emitter = pipeMap[mapX + ',' + mapY];
+            let center = 0.5;
+            if (emitter) {
+                center += Math.sin(emitter.phase) * 0.015; // Vibration
+            }
+
+            // Vertical Pipe at center of wall segment
+            if (Math.abs(wallX - center) < 0.15) {
+                let shade = Math.cos((wallX - center) / 0.15 * 1.57);
+                baseR = 140 * shade; baseG = 140 * shade; baseB = 150 * shade;
+                if (emitter && emitter.vent) {
+                    baseR *= 0.8; baseG *= 0.7; baseB *= 0.6; // Darker/Rusty vent
+                }
+            }
+        }
+
         // Distance Falloff (Fog)
         let distFactor = 1.0 / (1.0 + perpWallDist * perpWallDist * (0.05 + fear * 0.15)); // Fog thickens with fear
         
@@ -1472,6 +1768,27 @@ function draw() {
 
         ctx.fillStyle = `rgb(${Math.floor(r)}, ${Math.floor(g)}, ${Math.floor(b)})`;
         ctx.fillRect(x, drawStart, 1, drawEnd - drawStart);
+
+        // Level 2: Horizontal Pipes (Overlay)
+        if (currentLevel === 2) {
+            let pr = 120 * distFactor * lightFactor;
+            let pg = 120 * distFactor * lightFactor;
+            let pb = 130 * distFactor * lightFactor;
+            ctx.fillStyle = `rgb(${Math.floor(pr)}, ${Math.floor(pg)}, ${Math.floor(pb)})`;
+            
+            let wallTop = -lineHeight / 2 + horizon + glitchY;
+            let ph = lineHeight * 0.08;
+            
+            let py1 = wallTop + lineHeight * 0.4;
+            let yStart1 = Math.max(drawStart, py1);
+            let yEnd1 = Math.min(drawEnd, py1 + ph);
+            if (yEnd1 > yStart1) ctx.fillRect(x, yStart1, 1, yEnd1 - yStart1);
+
+            let py2 = wallTop + lineHeight * 0.7;
+            let yStart2 = Math.max(drawStart, py2);
+            let yEnd2 = Math.min(drawEnd, py2 + ph);
+            if (yEnd2 > yStart2) ctx.fillRect(x, yStart2, 1, yEnd2 - yStart2);
+        }
     }
 
     // Sprite Rendering
@@ -1480,6 +1797,7 @@ function draw() {
     props.forEach(p => { sprites.push({ x: p.x, y: p.y, type: p.type }); });
     batteries.forEach(b => { if (b.active) sprites.push({ x: b.x, y: b.y, type: 'battery' }); });
     entities.forEach(e => { if(e.opacity > 0.01) sprites.push({ x: e.x, y: e.y, type: 'entity', obj: e }); });
+    steamParticles.forEach(sp => { sprites.push({ x: sp.x, y: sp.y, type: 'steam', obj: sp }); });
     if (exitPos && exitOpen) sprites.push({ x: exitPos.x, y: exitPos.y, type: 'exit' });
 
     sprites.sort((a, b) => {
@@ -1704,6 +2022,19 @@ function draw() {
                         let bH = toothLen * (0.2 + 0.8 * toothShapeBot);
                         ctx.fillRect(stripe, yMouthBot - bH, 1, bH);
                     }
+                }
+                else if (sprite.type === 'steam') {
+                    let sp = sprite.obj;
+                    // Calculate screen Y based on Z height
+                    // Floor is at horizon + spriteHeight/2. Ceiling at horizon - spriteHeight/2.
+                    // Z=0 is floor, Z=1 is ceiling.
+                    let screenZ = (horizon + spriteHeight/2) - (sp.z * spriteHeight);
+                    let size = spriteWidth * sp.size;
+                    let alpha = (sp.life / sp.maxLife) * 0.3;
+                    ctx.fillStyle = `rgba(200, 200, 200, ${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(spriteScreenX, screenZ, size/2, 0, Math.PI*2);
+                    ctx.fill();
                 }
             }
         }
