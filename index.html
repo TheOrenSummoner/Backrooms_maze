@@ -2,7 +2,6 @@
 <html>
 <head>
     <title>Backrooms Horror Game</title>
-    <title>Made with Gemini</title>
     <style>
         body { margin: 0; padding: 0; background: #000; overflow: hidden; color: #fff; font-family: 'Courier New', monospace; user-select: none; }
         canvas { display: block; width: 100%; height: 100%; cursor: none; }
@@ -591,6 +590,7 @@ function hasLineOfSight(x1, y1, x2, y2) {
 function setupNewGame() {
     document.getElementById('overlay').onclick = () => startGame(true);
     document.querySelector('#overlay h1').innerText = "The Backrooms";
+    document.querySelector('#overlay h1').innerText = "Made With Gemini";
     document.getElementById('msg').innerHTML = `Click to Start`;
     document.getElementById('jumpscare-overlay').style.display = 'none';
 }
