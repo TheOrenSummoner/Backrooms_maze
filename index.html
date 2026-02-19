@@ -169,6 +169,10 @@ const imgBattery = new Image(); imgBattery.src = 'Battery.webp';
 const imgEnergyBar = new Image(); imgEnergyBar.src = 'Energy Bar.webp';
 const imgAlmondWater = new Image(); imgAlmondWater.src = 'Almond Water.webp';
 const imgSmiler = new Image(); imgSmiler.src = 'Smiler.webp';
+const imgTable = new Image(); imgTable.src = 'Table.webp';
+const imgChair = new Image(); imgChair.src = 'Chair.webp';
+const imgLamp = new Image(); imgLamp.src = 'Lamp.webp';
+const imgPlant = new Image(); imgPlant.src = 'Plants.webp';
 
 const LEVEL_NOTES = [
     [ // Level 0
@@ -2223,14 +2227,27 @@ function draw() {
         else if (sprite.type === 'energy_bar' && imgEnergyBar.complete && imgEnergyBar.naturalWidth > 0) imgToDraw = imgEnergyBar;
         else if (sprite.type === 'almond_water' && imgAlmondWater.complete && imgAlmondWater.naturalWidth > 0) imgToDraw = imgAlmondWater;
         else if (sprite.type === 'entity' && imgSmiler.complete && imgSmiler.naturalWidth > 0) imgToDraw = imgSmiler;
+        else if (sprite.type === 'table' && imgTable.complete && imgTable.naturalWidth > 0) imgToDraw = imgTable;
+        else if (sprite.type === 'chair' && imgChair.complete && imgChair.naturalWidth > 0) imgToDraw = imgChair;
+        else if (sprite.type === 'lamp' && imgLamp.complete && imgLamp.naturalWidth > 0) imgToDraw = imgLamp;
+        else if (sprite.type === 'plant' && imgPlant.complete && imgPlant.naturalWidth > 0) imgToDraw = imgPlant;
 
         let floorAlignOffset = 0;
         if (imgToDraw) {
             let aspect = imgToDraw.width / imgToDraw.height;
-            let scale = 0.4; // 40% of standard cell scale
-            if (sprite.type === 'energy_bar') scale = 0.5; // Slightly longer
+            let scale;
             
-            if (sprite.type === 'entity') scale = 1.0;
+            if (sprite.type === 'entity' || sprite.type === 'lamp') {
+                scale = 1.0;
+            } else if (sprite.type === 'table') {
+                scale = 0.8;
+            } else if (sprite.type === 'chair') {
+                scale = 0.7;
+            } else if (sprite.type === 'energy_bar' || sprite.type === 'plant') {
+                scale = 0.5;
+            } else {
+                scale = 0.4; // Default for battery, etc.
+            }
 
             if (aspect > 1) { // Wide
                 spriteWidth = baseHeight * scale;
@@ -2254,6 +2271,11 @@ function draw() {
 
         // Apply floor alignment adjustment for scaled sprites
         vMove += floorAlignOffset;
+
+        // Fine-tune vertical alignment for the table to compensate for image padding
+        if (sprite.type === 'table') {
+            vMove -= spriteHeight * 0.15; // Lower the table to counteract empty space at bottom of image
+        }
 
         let drawStartY = -spriteHeight / 2 + horizon - vMove;
         let trueStartY = drawStartY; // Record pure position for rendering calculation
@@ -2320,102 +2342,6 @@ function draw() {
                             }
                         }
                      }
-                }
-                else if (['chair', 'table', 'plant', 'lamp'].includes(sprite.type)) {
-                    let dx = progress - 0.5;
-                    let dim = flashlightOn ? 1.0 : 0.3;
-                    
-                    if (sprite.type === 'chair') {
-                        // Wooden Chair - 3D Fake
-                        if (Math.abs(dx) < 0.25) {
-                            let r = 70*dim, g = 45*dim, b = 25*dim;
-                            
-                            // Back Legs (Inner, Darker)
-                            if (Math.abs(dx) > 0.15 && Math.abs(dx) < 0.22) {
-                                ctx.fillStyle = `rgb(${r*0.6}, ${g*0.6}, ${b*0.6})`;
-                                ctx.fillRect(stripe, drawStartY + spriteHeight * 0.55, 1, spriteHeight * 0.35);
-                            }
-
-                            // Back Rest (Top half)
-                            if (Math.abs(dx) < 0.2) {
-                                let isSlat = (Math.floor((dx + 0.5) * 20) % 2 === 0) || Math.abs(dx) > 0.15; 
-                                if (isSlat) {
-                                    ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-                                    ctx.fillRect(stripe, drawStartY, 1, spriteHeight * 0.5);
-                                }
-                            }
-
-                            // Seat (Middle)
-                            if (Math.abs(dx) < 0.22) {
-                                // Top Surface (Light)
-                                ctx.fillStyle = `rgb(${r*1.3}, ${g*1.3}, ${b*1.3})`;
-                                ctx.fillRect(stripe, drawStartY + spriteHeight * 0.5, 1, spriteHeight * 0.04);
-                                // Front Edge (Dark)
-                                ctx.fillStyle = `rgb(${r*0.8}, ${g*0.8}, ${b*0.8})`;
-                                ctx.fillRect(stripe, drawStartY + spriteHeight * 0.54, 1, spriteHeight * 0.06);
-                            }
-
-                            // Front Legs (Outer, Normal)
-                            if (Math.abs(dx) > 0.18) {
-                                ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-                                ctx.fillRect(stripe, drawStartY + spriteHeight * 0.6, 1, spriteHeight * 0.4);
-                            }
-                        }
-                    }
-                    else if (sprite.type === 'table') {
-                         // Table - 3D Fake
-                         if (Math.abs(dx) < 0.45) {
-                             let r = 90*dim, g = 60*dim, b = 40*dim;
-
-                             // Back Legs (Inner, Darker)
-                             if (Math.abs(dx) > 0.25 && Math.abs(dx) < 0.32) {
-                                 ctx.fillStyle = `rgb(${r*0.5}, ${g*0.5}, ${b*0.5})`;
-                                 ctx.fillRect(stripe, drawStartY + spriteHeight * 0.6, 1, spriteHeight * 0.35);
-                             }
-
-                             // Front Legs (Outer, Normal)
-                             if (Math.abs(dx) > 0.38) {
-                                 ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-                                 ctx.fillRect(stripe, drawStartY + spriteHeight * 0.65, 1, spriteHeight * 0.35);
-                             }
-
-                             // Table Top
-                             // Top Surface (Light)
-                             ctx.fillStyle = `rgb(${r*1.2}, ${g*1.2}, ${b*1.2})`;
-                             ctx.fillRect(stripe, drawStartY + spriteHeight * 0.55, 1, spriteHeight * 0.05);
-                             
-                             // Side/Front Edge (Dark)
-                             ctx.fillStyle = `rgb(${r*0.8}, ${g*0.8}, ${b*0.8})`;
-                             ctx.fillRect(stripe, drawStartY + spriteHeight * 0.60, 1, spriteHeight * 0.05);
-                         }
-                    }
-                    else if (sprite.type === 'plant') {
-                        // Pot
-                        if (Math.abs(dx) < 0.15) {
-                            ctx.fillStyle = `rgb(${150*dim}, ${80*dim}, ${40*dim})`;
-                            ctx.fillRect(stripe, drawStartY + spriteHeight * 0.7, 1, spriteHeight * 0.3);
-                        }
-                        // Greenery
-                        if (Math.abs(dx) < 0.3) {
-                            // Add some texture variation based on dx without using screen pixels
-                            let noise = Math.sin(dx * 50); 
-                            let gVal = 100 + noise * 20;
-                            ctx.fillStyle = `rgb(${20*dim}, ${gVal*dim}, ${20*dim})`;
-                            ctx.fillRect(stripe, drawStartY + spriteHeight * 0.2, 1, spriteHeight * 0.5);
-                        }
-                    }
-                    else if (sprite.type === 'lamp') {
-                        // Pole
-                        if (Math.abs(dx) < 0.05) {
-                            ctx.fillStyle = `rgb(${20*dim}, ${20*dim}, ${20*dim})`;
-                            ctx.fillRect(stripe, drawStartY + spriteHeight * 0.2, 1, spriteHeight * 0.8);
-                        }
-                        // Shade
-                        if (Math.abs(dx) < 0.2) {
-                            ctx.fillStyle = `rgb(${200*dim}, ${180*dim}, ${150*dim})`;
-                            ctx.fillRect(stripe, drawStartY + spriteHeight * 0.1, 1, spriteHeight * 0.2);
-                        }
-                    }
                 }
                 else if (sprite.type === 'exit') {
                     // Door Visuals
