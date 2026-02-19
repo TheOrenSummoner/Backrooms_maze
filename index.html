@@ -13,6 +13,9 @@
         .ui-left { display: flex; flex-direction: column; gap: 5px; }
         #stamina-bar { width: 200px; height: 10px; border: 1px solid #444; background: #111; position: relative; }
         #stamina-fill { width: 100%; height: 100%; background: #0f0; transition: width 0.1s; }
+
+        #sanity-bar { width: 200px; height: 10px; border: 1px solid #444; background: #111; position: relative; }
+        #sanity-fill { width: 100%; height: 100%; background: #90f; transition: width 0.1s; }
         
         #battery-wrapper { display: flex; align-items: center; gap: 10px; margin-top: 5px; }
         #battery-icon { width: 20px; text-align: center; font-weight: bold; }
@@ -54,6 +57,43 @@
         }
         #note-text { font-size: 20px; margin-bottom: 20px; font-weight: bold; }
         #note-hint { font-size: 12px; color: #555; text-transform: uppercase; }
+
+        /* Inventory */
+        #inventory-modal {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(20, 20, 20, 0.95);
+            border: 2px solid #666;
+            padding: 20px;
+            z-index: 50;
+            text-align: center;
+            color: #fff;
+            width: 320px;
+            box-shadow: 0 0 20px #000;
+            pointer-events: auto;
+        }
+        #inventory-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 20px 0; }
+        .inv-item-slot { width: 60px; height: 60px; border: 1px solid #444; background: #111; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; transition: background 0.2s; }
+        .inv-item-slot:hover { background: #333; border-color: #888; }
+        .inv-item-slot.empty { cursor: default; }
+        .inv-item-slot.empty:hover { background: #111; border-color: #444; }
+        .inv-item-slot.hover { background: #333; border-color: #888; } /* Virtual cursor hover */
+
+        #virtual-cursor {
+            position: fixed;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #fff;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 9999;
+            display: none;
+            box-shadow: 0 0 4px #000;
+        }
     </style>
 </head>
 <body>
@@ -64,6 +104,8 @@
         <div id="orbs-disp" class="hud-text">Notes: 0/0</div>
         <div class="hud-text">Stamina:</div>
         <div id="stamina-bar"><div id="stamina-fill"></div></div>
+        <div class="hud-text">Sanity:</div>
+        <div id="sanity-bar"><div id="sanity-fill"></div></div>
         <div id="battery-wrapper">
             <div id="battery-icon" class="hud-text">🔦</div>
             <div id="battery-bar"><div id="battery-fill"></div></div>
@@ -74,6 +116,12 @@
     <div id="minimap-container">
         <canvas id="minimap-canvas"></canvas>
     </div>
+    <div id="inventory-modal">
+        <h2 style="margin:0; color:#ccc; font-size:18px; letter-spacing:2px;">BACKPACK</h2>
+        <div id="inventory-grid"></div>
+        <div style="font-size:12px; color:#666;">CLICK TO USE | TAB TO CLOSE</div>
+    </div>
+    <div id="virtual-cursor"></div>
     <div id="note-modal">
         <div id="note-text"></div>
         <div id="note-hint">Press Space to Close</div>
@@ -85,10 +133,12 @@
 </div>
 
 <div id="overlay">
-    <h1 style="color:#800; font-size:40px; text-transform:uppercase; letter-spacing:5px;">Labyrinth of Shadows</h1>
-    <p id="msg">Click to Enter</p>
-    <p style="color:#666; font-size:12px; margin-top:20px;">MOUSE: Look | WASD: Move | SHIFT: Sprint | F: Flashlight</p>
-    <p style="color:#444; font-size:12px;">Light attracts attention. Darkness hides you... mostly.</p>
+    <h1 style="color:#800; font-size:40px; text-transform:uppercase; letter-spacing:5px; margin-bottom: 5px;">Backrooms Maze</h1>
+    <h3 style="color:#666; font-size:16px; margin-top:0; margin-bottom: 20px;">Made with Gemini</h3>
+    <p style="color:#ccc; font-size:18px; margin: 5px 0;">Flash the entity to scare it away</p>
+    <p style="color:#ccc; font-size:18px; margin: 5px 0;">Find all the notes to move on to the next level</p>
+    <p style="color:#666; font-size:12px; margin-top:30px;">MOUSE: Look | WASD: Move | SHIFT: Sprint | F: Flashlight | TAB: Inventory</p>
+    <p id="msg" style="margin-top: 20px;">Click To Start</p>
 </div>
 
 <canvas id="game"></canvas>
@@ -107,9 +157,17 @@ const MOUSE_SENSITIVITY = 0.003;
 const STAMINA_DRAIN = 10.0; 
 const STAMINA_MAX = 100;
 
+const SANITY_DRAIN = 8.0; // Points per second when looking at entity
+const SANITY_MAX = 100;
+
 const BATTERY_DRAIN = 5.0;     // Drains fully in ~12 seconds
 const BATTERY_RECHARGE = 0;  // No recharge
 const BATTERY_MAX = 100;
+
+// Image Assets
+const imgBattery = new Image(); imgBattery.src = 'Battery.webp';
+const imgEnergyBar = new Image(); imgEnergyBar.src = 'Energy Bar.webp';
+const imgAlmondWater = new Image(); imgAlmondWater.src = 'Almond Water.webp';
 
 const LEVEL_NOTES = [
     [ // Level 0
@@ -245,7 +303,11 @@ let screenShake = 0;
 let exitPos = null;
 let exitOpen = false;
 let isPaused = false;
+let isInventoryOpen = false;
+let virtualCursorPos = { x: window.innerWidth/2, y: window.innerHeight/2 };
 let currentLevel = 0;
+let checkpoint = { level: 0, mapWidth: 10, mapHeight: 10, inventory: [] };
+let inventory = new Array(8).fill(null);
 let noteIndex = 0;
 let lastStableDir = { x: 0, y: 0 };
 let turnEventCooldown = 0;
@@ -264,8 +326,7 @@ let flashLightFlicker = 1.0;
 let headBobPhase = 0;
 let headBobOffset = 0;
 let noiseCanvas = null;
-let fear = 0;
-let lastEntityPos = { x: 0, y: 0 };
+let sanity = SANITY_MAX;
 
 // Input
 const keys = { w: false, a: false, s: false, d: false, shift: false };
@@ -273,6 +334,9 @@ const keys = { w: false, a: false, s: false, d: false, shift: false };
 // Entities
 let orbs = [];
 let batteries = [];
+let energyBars = [];
+let almondWaters = [];
+let lights = [];
 let props = [];
 let entities = [];
 let zBuffer = [];
@@ -307,12 +371,39 @@ window.onload = () => {
     nCtx.putImageData(idata, 0, 0);
 
     // Input Listeners
-    window.addEventListener('keydown', (e) => handleKey(e.code, true));
+    window.addEventListener('keydown', (e) => {
+        if (e.code === 'Tab') e.preventDefault();
+
+        // Cheat code listener
+        if (e.ctrlKey && e.altKey && (e.code.startsWith('Digit') || e.code.startsWith('Numpad'))) {
+            e.preventDefault();
+            let numStr = e.code.replace('Digit', '').replace('Numpad', '');
+            let levelNum = parseInt(numStr, 10);
+            
+            if (!isNaN(levelNum) && levelNum >= 0 && levelNum < LEVEL_NOTES.length) {
+                jumpToLevel(levelNum);
+                return; // Don't process other keys
+            }
+        }
+
+        handleKey(e.code, true);
+    });
     window.addEventListener('keyup', (e) => handleKey(e.code, false));
     
     document.addEventListener('mousemove', handleMouseLook);
+    document.addEventListener('mousedown', (e) => {
+        if (isInventoryOpen && document.pointerLockElement === canvas) {
+            let el = document.elementFromPoint(virtualCursorPos.x, virtualCursorPos.y);
+            let slot = el ? el.closest('.inv-item-slot') : null;
+            if (slot) slot.click();
+        }
+    });
     document.addEventListener('pointerlockchange', () => {
-        // Optional pause logic
+        if (document.pointerLockElement !== canvas && isInventoryOpen) {
+            document.getElementById('virtual-cursor').style.display = 'none';
+        } else if (document.pointerLockElement === canvas && isInventoryOpen) {
+            document.getElementById('virtual-cursor').style.display = 'block';
+        }
     });
 
     window.addEventListener('resize', resize);
@@ -338,6 +429,10 @@ function handleKey(code, state) {
     if (code === 'KeyD') keys.d = state;
     if (code === 'ShiftLeft' || code === 'ShiftRight') keys.shift = state;
     
+    if (state && (code === 'Tab' || code === 'KeyI')) {
+        toggleInventory();
+    }
+
     // Toggle Flashlight on Press only
     if (state && code === 'KeyF') {
         if (battery > 0) {
@@ -348,7 +443,26 @@ function handleKey(code, state) {
 }
 
 function handleMouseLook(e) {
-    if (document.pointerLockElement !== canvas || !running) return;
+    if (document.pointerLockElement !== canvas) return;
+
+    if (isInventoryOpen) {
+        virtualCursorPos.x += e.movementX;
+        virtualCursorPos.y += e.movementY;
+        virtualCursorPos.x = Math.max(0, Math.min(window.innerWidth, virtualCursorPos.x));
+        virtualCursorPos.y = Math.max(0, Math.min(window.innerHeight, virtualCursorPos.y));
+        
+        const vc = document.getElementById('virtual-cursor');
+        vc.style.left = virtualCursorPos.x + 'px';
+        vc.style.top = virtualCursorPos.y + 'px';
+
+        document.querySelectorAll('.inv-item-slot').forEach(el => el.classList.remove('hover'));
+        let el = document.elementFromPoint(virtualCursorPos.x, virtualCursorPos.y);
+        let slot = el ? el.closest('.inv-item-slot') : null;
+        if (slot) slot.classList.add('hover');
+        return;
+    }
+
+    if (!running) return;
 
     let rot = e.movementX * MOUSE_SENSITIVITY;
     
@@ -516,6 +630,30 @@ function playSound(type) {
         gain.gain.linearRampToValueAtTime(0, t + 0.1);
         osc.start(); osc.stop(t + 0.1);
     }
+    else if (type === 'energy_bar') {
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(300, t);
+        osc.frequency.exponentialRampToValueAtTime(500, t + 0.1);
+        gain.gain.setValueAtTime(0.05, t);
+        gain.gain.linearRampToValueAtTime(0, t + 0.1);
+        osc.start(); osc.stop(t + 0.1);
+    }
+    else if (type === 'pickup') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(800, t);
+        osc.frequency.exponentialRampToValueAtTime(1200, t + 0.05);
+        gain.gain.setValueAtTime(0.05, t);
+        gain.gain.linearRampToValueAtTime(0, t + 0.05);
+        osc.start(); osc.stop(t + 0.05);
+    }
+    else if (type === 'almond_water') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(600, t);
+        osc.frequency.exponentialRampToValueAtTime(1200, t + 0.2);
+        gain.gain.setValueAtTime(0.1, t);
+        gain.gain.linearRampToValueAtTime(0, t + 0.2);
+        osc.start(); osc.stop(t + 0.2);
+    }
     else if (type === 'decoy') {
         osc.type = 'square';
         osc.frequency.setValueAtTime(140 + Math.random()*160, t);
@@ -563,6 +701,34 @@ function playSound(type) {
         src.start(); src.stop(t + 0.5);
         return;
     }
+    else if (type === 'footstep') {
+        if (!noiseBuffer) return;
+        const src = audioCtx.createBufferSource();
+        src.buffer = noiseBuffer;
+        
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'lowpass';
+        
+        // Material based sound
+        if (currentLevel === 0 || currentLevel === 4) { // Carpet
+            filter.frequency.setValueAtTime(250, t);
+            gain.gain.setValueAtTime(0.15, t);
+        } else if (currentLevel === 2) { // Metal
+            filter.frequency.setValueAtTime(600, t);
+            filter.Q.value = 5; 
+            gain.gain.setValueAtTime(0.1, t);
+        } else { // Concrete
+            filter.frequency.setValueAtTime(400, t);
+            gain.gain.setValueAtTime(0.2, t);
+        }
+        
+        filter.frequency.exponentialRampToValueAtTime(50, t + 0.1);
+        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
+        
+        src.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+        src.start(); src.stop(t + 0.15);
+        return;
+    }
 }
 
 // ---------------- GAME LOGIC ----------------
@@ -587,10 +753,96 @@ function hasLineOfSight(x1, y1, x2, y2) {
     return true; // No walls
 }
 
+function addToInventory(type) {
+    let idx = inventory.indexOf(null);
+    if (idx !== -1) {
+        inventory[idx] = type;
+        updateUI();
+        return true;
+    }
+    return false;
+}
+
+function useItem(index) {
+    if ((isPaused && !isInventoryOpen) || gameOver) return;
+    let item = inventory[index];
+    if (!item) return;
+
+    if (item === 'battery') {
+        battery = Math.min(BATTERY_MAX, battery + 40);
+        playSound('battery');
+    } else if (item === 'energy_bar') {
+        stamina = Math.min(STAMINA_MAX, stamina + 50);
+        playSound('energy_bar');
+    } else if (item === 'almond_water') {
+        sanity = Math.min(SANITY_MAX, sanity + 40);
+        playSound('almond_water');
+    }
+    inventory[index] = null;
+    updateUI();
+}
+
+function toggleInventory() {
+    const modal = document.getElementById('inventory-modal');
+    const vCursor = document.getElementById('virtual-cursor');
+    if (isInventoryOpen) {
+        // Close
+        modal.style.display = 'none';
+        vCursor.style.display = 'none';
+        isInventoryOpen = false;
+    } else {
+        // Open
+        if (gameOver) return;
+        if (isPaused) return; // Don't open if paused by note/menu
+        isInventoryOpen = true;
+        
+        // Center Virtual Cursor
+        virtualCursorPos.x = window.innerWidth / 2;
+        virtualCursorPos.y = window.innerHeight / 2;
+        vCursor.style.left = virtualCursorPos.x + 'px';
+        vCursor.style.top = virtualCursorPos.y + 'px';
+        vCursor.style.display = 'block';
+
+        modal.style.display = 'block';
+        renderInventory();
+    }
+}
+
+function renderInventory() {
+    const grid = document.getElementById('inventory-grid');
+    grid.innerHTML = '';
+    inventory.forEach((item, index) => {
+        let slot = document.createElement('div');
+        slot.className = 'inv-item-slot';
+        if (item) {
+            const img = new Image();
+            img.style.width = '80%';
+            img.style.height = '80%';
+            img.style.objectFit = 'contain';
+
+            if (item === 'battery') {
+                img.src = imgBattery.src;
+            } else if (item === 'energy_bar') {
+                img.src = imgEnergyBar.src;
+            } else if (item === 'almond_water') {
+                img.src = imgAlmondWater.src;
+            }
+            slot.appendChild(img);
+            slot.onclick = () => {
+                useItem(index);
+                renderInventory();
+            };
+        } else {
+            slot.className += ' empty';
+        }
+        grid.appendChild(slot);
+    });
+}
+
 function setupNewGame() {
     document.getElementById('overlay').onclick = () => startGame(true);
-    document.querySelector('#overlay h1').innerText = "The Backrooms - Made with Gemini";
-    document.getElementById('msg').innerHTML = `Click to Start`;
+    document.querySelector('#overlay h1').innerText = "Backrooms Maze";
+    document.getElementById('msg').innerHTML = `Click To Start`;
     document.getElementById('jumpscare-overlay').style.display = 'none';
 }
 
@@ -606,6 +858,8 @@ async function startGame(isNewGame) {
         mapWidth = 10;
         mapHeight = 10;
         currentLevel = 0;
+        inventory = new Array(8).fill(null);
+        checkpoint = { level: 0, mapWidth: 10, mapHeight: 10, inventory: [...inventory] };
         noteIndex = 0;
         lastStableDir = { x: -1, y: 0 };
         turnEventCooldown = 0;
@@ -630,6 +884,8 @@ function generateLevel() {
     pipeEmitters = [];
     pipeMap = {};
     steamParticles = [];
+    lights = [];
+    props = [];
     
     if (currentLevel === 2) {
         // Level 2: Pipe Dreams - Long Hallways (Recursive Backtracker with Inertia)
@@ -754,21 +1010,59 @@ function generateLevel() {
 
     // Level 4: Office Rooms
     if (currentLevel === 4) {
-        let roomCount = Math.max(3, Math.floor(mapWidth * mapHeight * 0.02));
-        for(let k=0; k<roomCount; k++) {
-             let rw = Math.floor(Math.random() * 3) + 2; 
-             let rh = Math.floor(Math.random() * 3) + 2;
-             let rx = Math.floor(Math.random() * (mapWidth - rw));
-             let ry = Math.floor(Math.random() * (mapHeight - rh));
-             for(let xx=0; xx<rw; xx++) {
-                 for(let yy=0; yy<rh; yy++) {
-                     let px = (rx+xx)*2 + 1;
-                     let py = (ry+yy)*2 + 1;
-                     worldMap[px][py] = 0;
-                     if (xx < rw-1) worldMap[px+1][py] = 0;
-                     if (yy < rh-1) worldMap[px][py+1] = 0;
-                 }
-             }
+        let roomAttempts = Math.max(20, Math.floor(mapWidth * mapHeight * 0.15));
+        let roomsAdded = 0;
+        
+        for (let i = 0; i < roomAttempts && roomsAdded < 8; i++) { // Try to add up to 8 big rooms
+            // Pick a random wall tile. Avoid edges.
+            let wx = Math.floor(Math.random() * (physicalWidth - 4)) + 2;
+            let wy = Math.floor(Math.random() * (physicalHeight - 4)) + 2;
+
+            if (worldMap[wx][wy] !== 1) continue; // Must be a wall
+
+            // Check for a corridor on one side and solid space on the other
+            let corridorDir = null;
+            if (worldMap[wx - 1][wy] === 0 && worldMap[wx + 1][wy] === 1) corridorDir = { x: 1, y: 0 }; // Corridor to the left
+            else if (worldMap[wx + 1][wy] === 0 && worldMap[wx - 1][wy] === 1) corridorDir = { x: -1, y: 0 }; // Corridor to the right
+            else if (worldMap[wx][wy - 1] === 0 && worldMap[wx][wy + 1] === 1) corridorDir = { x: 0, y: 1 }; // Corridor above
+            else if (worldMap[wx][wy + 1] === 0 && worldMap[wx][wy - 1] === 1) corridorDir = { x: 0, y: -1 }; // Corridor below
+            else continue;
+
+            // We found a potential doorway spot. Let's try to carve a room.
+            let roomW = Math.floor(Math.random() * 5) + 5; // 5-9 tiles wide
+            let roomH = Math.floor(Math.random() * 5) + 5; // 5-9 tiles high
+            let roomX = wx + corridorDir.x;
+            let roomY = wy + corridorDir.y;
+
+            if (corridorDir.x === -1) roomX -= (roomW - 1); // Adjust start position if room goes left
+            if (corridorDir.y === -1) roomY -= (roomH - 1); // Adjust start position if room goes up
+
+            // Check if the area is clear (all walls)
+            let canPlace = true;
+            for (let x = 0; x < roomW; x++) {
+                for (let y = 0; y < roomH; y++) {
+                    let checkX = roomX + x; let checkY = roomY + y;
+                    if (checkX <= 0 || checkX >= physicalWidth - 1 || checkY <= 0 || checkY >= physicalHeight - 1 || worldMap[checkX][checkY] !== 1) {
+                        canPlace = false; break;
+                    }
+                }
+                if (!canPlace) break;
+            }
+
+            if (canPlace) {
+                for (let x = 0; x < roomW; x++) {
+                    for (let y = 0; y < roomH; y++) {
+                        worldMap[roomX + x][roomY + y] = 0; // Carve room
+                        // Add desks and chairs in rows, leaving a border
+                        if (x > 0 && x < roomW - 1 && y > 0 && y < roomH - 1 && (y % 2 === 1)) {
+                            props.push({ x: roomX + x + 0.5, y: roomY + y + 0.5, type: 'table' });
+                            props.push({ x: roomX + x + 0.5, y: roomY + y - 0.2, type: 'chair' });
+                        }
+                    }
+                }
+                worldMap[wx][wy] = 0; // Open the doorway
+                roomsAdded++;
+            }
         }
     }
 
@@ -852,11 +1146,14 @@ function generateLevel() {
 
     stamina = STAMINA_MAX;
     battery = BATTERY_MAX;
+    sanity = SANITY_MAX;
     flashlightOn = false;
     exitOpen = false;
 
     orbs = [];
     batteries = [];
+    energyBars = [];
+    almondWaters = [];
     let orbCount = LEVEL_NOTES[currentLevel % LEVEL_NOTES.length].length;
     for(let i=0; i<orbCount; i++) {
         if(emptySpots.length > 0) {
@@ -866,7 +1163,6 @@ function generateLevel() {
     }
 
     // Props (Random Items)
-    props = [];
     let propCount = Math.floor(mapWidth * mapHeight * 0.08); 
     const propTypes = ['chair', 'table', 'plant', 'lamp'];
     for(let i=0; i<propCount; i++) {
@@ -893,7 +1189,10 @@ function generateLevel() {
                 py += (Math.random() * 0.4 - 0.2);
             }
             
-            props.push({ x: px, y: py, type: type });
+            // Avoid overlapping existing props (like office desks)
+            if (!props.some(p => (p.x - px)**2 + (p.y - py)**2 < 0.6)) {
+                props.push({ x: px, y: py, type: type });
+            }
         }
     }
 
@@ -907,6 +1206,29 @@ function generateLevel() {
             batteries.push({ x: bx, y: by, active: true });
         }
     }
+
+    // Energy Bars
+    let energyBarCount = Math.max(3, Math.floor(mapWidth * mapHeight * 0.04));
+    for(let i=0; i<energyBarCount; i++) {
+        if(emptySpots.length > 0) {
+            let s = emptySpots.splice(Math.floor(Math.random() * emptySpots.length), 1)[0];
+            let ex = s.x + 0.5 + (Math.random() * 0.4 - 0.2);
+            let ey = s.y + 0.5 + (Math.random() * 0.4 - 0.2);
+            energyBars.push({ x: ex, y: ey, active: true });
+        }
+    }
+
+    // Almond Water
+    let almondWaterCount = Math.max(2, Math.floor(mapWidth * mapHeight * 0.025));
+    for(let i=0; i<almondWaterCount; i++) {
+        if(emptySpots.length > 0) {
+            let s = emptySpots.splice(Math.floor(Math.random() * emptySpots.length), 1)[0];
+            let awx = s.x + 0.5 + (Math.random() * 0.4 - 0.2);
+            let awy = s.y + 0.5 + (Math.random() * 0.4 - 0.2);
+            almondWaters.push({ x: awx, y: awy, active: true });
+        }
+    }
+
 
     updateUI();
     
@@ -1079,7 +1401,41 @@ function triggerGameOver() {
         }
     });
     document.getElementById('note-modal').style.display = 'none';
-    setupNewGame();
+    overlay.onclick = () => {
+        // Restore from checkpoint
+        currentLevel = checkpoint.level;
+        mapWidth = checkpoint.mapWidth;
+        mapHeight = checkpoint.mapHeight;
+        inventory = [...checkpoint.inventory];
+        noteIndex = 0;
+        generateLevel();
+        startGame(false);
+    };
+}
+
+function jumpToLevel(levelNum) {
+    if (gameOver || !running) return;
+
+    // Stop sounds from current level
+    entities.forEach(e => {
+        if (e.sound) {
+            e.sound.gain.gain.value = 0;
+            try { e.sound.osc.stop(); e.sound.osc.disconnect(); } catch(err) {}
+        }
+    });
+
+    currentLevel = levelNum;
+    noteIndex = 0;
+    mapWidth = 10 + (currentLevel * 5);
+    mapHeight = 10 + (currentLevel * 5);
+
+    // Update checkpoint to prevent getting stuck on a hard level
+    checkpoint.level = currentLevel;
+    checkpoint.mapWidth = mapWidth;
+    checkpoint.mapHeight = mapHeight;
+    checkpoint.inventory = [...inventory];
+
+    generateLevel();
 }
 
 function elongateCorridor() {
@@ -1246,11 +1602,8 @@ function update(dt) {
         if (audioCtx && flashlightHum.gain) flashlightHum.gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
     }
 
-    if (!keys.shift && stamina < STAMINA_MAX) {
-        stamina += (STAMINA_DRAIN / 2) * dt;
-        if (stamina > STAMINA_MAX) stamina = STAMINA_MAX;
-    }
-    if (keys.shift) {
+    // Only drain stamina if sprinting AND moving
+    if (keys.shift && (keys.w || keys.s || keys.a || keys.d)) {
         if (stamina > 0) {
             stamina -= STAMINA_DRAIN * dt;
             if (stamina < 0) stamina = 0;
@@ -1259,8 +1612,13 @@ function update(dt) {
 
     // Head Bobbing
     if (keys.w || keys.s || keys.a || keys.d) {
+        let oldPhase = headBobPhase;
         headBobPhase += dt * (isSprinting ? 18 : 12);
         headBobOffset = Math.sin(headBobPhase) * 4; // 4 pixels up/down
+        
+        if (Math.floor(headBobPhase / Math.PI) !== Math.floor(oldPhase / Math.PI)) {
+            playSound('footstep');
+        }
     } else {
         headBobOffset = headBobOffset * 0.9; // Smoothly return to center
         headBobPhase = 0;
@@ -1334,9 +1692,38 @@ function update(dt) {
             let dx = posX - b.x;
             let dy = posY - b.y;
             if (dx*dx + dy*dy < 0.25) { 
-                b.active = false;
-                battery = Math.min(BATTERY_MAX, battery + 40);
-                playSound('battery');
+                if (addToInventory('battery')) {
+                    b.active = false;
+                    playSound('pickup');
+                }
+            }
+        }
+    });
+
+    // Energy Bars
+    energyBars.forEach(eb => {
+        if (eb.active) {
+            let dx = posX - eb.x;
+            let dy = posY - eb.y;
+            if (dx*dx + dy*dy < 0.25) { 
+                if (addToInventory('energy_bar')) {
+                    eb.active = false;
+                    playSound('pickup');
+                }
+            }
+        }
+    });
+
+    // Almond Water
+    almondWaters.forEach(aw => {
+        if (aw.active) {
+            let dx = posX - aw.x;
+            let dy = posY - aw.y;
+            if (dx*dx + dy*dy < 0.25) { 
+                if (addToInventory('almond_water')) {
+                    aw.active = false;
+                    playSound('pickup');
+                }
             }
         }
     });
@@ -1363,6 +1750,13 @@ function update(dt) {
                 noteIndex = 0;
                 mapWidth += 5;
                 mapHeight += 5;
+
+                // Save checkpoint
+                checkpoint.level = currentLevel;
+                checkpoint.mapWidth = mapWidth;
+                checkpoint.mapHeight = mapHeight;
+                checkpoint.inventory = [...inventory];
+
                 generateLevel();
                 startGame(false);
             };
@@ -1371,8 +1765,6 @@ function update(dt) {
     }
 
     // 3. Entity AI - Psychological
-    let maxFear = 0;
-
     entities.forEach(entity => {
         // Dormancy Logic (Long stretches of absence)
         if (entity.dormantTimer > 0) {
@@ -1405,11 +1797,6 @@ function update(dt) {
         let dy = posY - entity.y;
         let dist = Math.sqrt(dx*dx + dy*dy);
 
-        if (dist < 8) {
-            let localFear = (1.0 - dist/8.0);
-            if (localFear > maxFear) maxFear = localFear;
-        }
-
         const toEntityX = -dx / dist; 
         const toEntityY = -dy / dist;
         const dot = dirX * toEntityX + dirY * toEntityY;
@@ -1417,6 +1804,11 @@ function update(dt) {
         let inFOV = dot > 0.7; // Roughly within screen bounds
         let hasLOS = hasLineOfSight(posX, posY, entity.x, entity.y);
         let isVisible = inFOV && hasLOS;
+
+        // New Sanity Drain Logic
+        if (isVisible) {
+            sanity = Math.max(0, sanity - SANITY_DRAIN * dt);
+        }
 
         // Pathfinding Update
         if (entity.pathTimer === undefined) entity.pathTimer = 0;
@@ -1468,16 +1860,6 @@ function update(dt) {
                         entity.opacity = 0;
                         entity.x = 1; entity.y = 1; // Move away
                         entity.currentPath = [];
-                        /*
-                        if (validSpots.length > 0) {
-                            let s = validSpots[Math.floor(Math.random() * validSpots.length)];
-                            entity.x = s.x + 0.5;
-                            entity.y = s.y + 0.5;
-                            entity.opacity = 0; // Start invisible at new spot
-                            entity.currentPath = [];
-                        } else {
-                            entity.opacity = 1.0; // No spot found, force reappear
-                        }*/
                     }
                 } else {
                     // Seen in dark: Creep slowly
@@ -1581,33 +1963,25 @@ function update(dt) {
             let panX = dirX * dx + dirY * dy; // Forward/Back relative projection
             let panY = planeX * dx + planeY * dy; // Left/Right relative projection
             
-            // Web Audio Panner takes x,y,z. We map left/right to position x
-            // Normalizing: if object is directly right, panY is positive.
-            // We use simple stereo panning (-1 to 1)
-            // The logic in original code was slightly off for true stereo, simplified here:
             // Calculate cross product for right/left determination
             let cross = dirX * dy - dirY * dx;
             entity.sound.panner.pan.value = Math.max(-1, Math.min(1, cross));
         }
     });
 
-    // Global Fear Effects
-    if (maxFear > fear) {
-        fear = Math.min(1.0, fear + dt * 0.5);
-    } else {
-        fear = Math.max(0, fear - dt * 0.1);
-    }
+    // Global Sanity Effects
+    let insanity = (SANITY_MAX - sanity) / SANITY_MAX; // 0.0 to 1.0
 
     if (audioCtx && masterFilter) {
-        let cutoff = 22000 - (fear * 18000);
+        let cutoff = 22000 - (insanity * 18000);
         masterFilter.frequency.setTargetAtTime(cutoff, audioCtx.currentTime, 0.1);
 
-        let hbVol = 0.02 + (0.1 * fear);
-        let hbRate = 1.0 + (fear * 2.0); 
-        heartbeat.gain.gain.setTargetAtTime(fear > 0.1 ? hbVol : 0, audioCtx.currentTime, 0.1);
+        let hbVol = 0.02 + (0.1 * insanity);
+        let hbRate = 1.0 + (insanity * 2.0); 
+        heartbeat.gain.gain.setTargetAtTime(insanity > 0.1 ? hbVol : 0, audioCtx.currentTime, 0.1);
         heartbeat.osc.frequency.setTargetAtTime(hbRate, audioCtx.currentTime, 0.1);
     }
-    screenShake = Math.max(screenShake * 0.9, fear * 2.0);
+    screenShake = Math.max(screenShake * 0.9, insanity * 2.0);
 
     updateUI(); 
 }
@@ -1627,7 +2001,9 @@ function showNextNote() {
 function closeNote() {
     document.getElementById('note-modal').style.display = 'none';
     isPaused = false;
-    canvas.requestPointerLock();
+    if (!isInventoryOpen) {
+        canvas.requestPointerLock();
+    }
 }
 
 function updateUI() {
@@ -1639,6 +2015,11 @@ function updateUI() {
     let sBar = document.getElementById('stamina-fill');
     sBar.style.width = sPct + '%';
     sBar.style.background = stamina > 20 ? '#0f0' : '#f00';
+
+    let sanPct = (sanity / SANITY_MAX) * 100;
+    let sanBar = document.getElementById('sanity-fill');
+    sanBar.style.width = sanPct + '%';
+    sanBar.style.background = sanity > 30 ? '#90f' : '#f00';
 
     let bPct = (battery / BATTERY_MAX) * 100;
     let bBar = document.getElementById('battery-fill');
@@ -1682,6 +2063,7 @@ function draw() {
 
     // Raycasting
     zBuffer = new Array(SCREEN_WIDTH).fill(0);
+    let insanity = (SANITY_MAX - sanity) / SANITY_MAX;
 
     for (let x = 0; x < SCREEN_WIDTH; x += 1) { // Optimization: Res 1
         let cameraX = 2 * x / SCREEN_WIDTH - 1;
@@ -1717,7 +2099,7 @@ function draw() {
         
         // Glitch Effect (Vertical Shift based on Fear)
         let glitchY = 0;
-        if (fear > 0.5 && Math.random() < (fear - 0.5) * 0.1) glitchY = (Math.random() - 0.5) * SCREEN_HEIGHT * 0.2;
+        if (insanity > 0.5 && Math.random() < (insanity - 0.5) * 0.1) glitchY = (Math.random() - 0.5) * SCREEN_HEIGHT * 0.2;
 
         let drawStart = -lineHeight / 2 + horizon + glitchY;
         if (drawStart < 0) drawStart = 0;
@@ -1753,8 +2135,25 @@ function draw() {
             }
         }
 
+        // Level 3: Brick Texture (Texture Mod)
+        if (currentLevel === 3) {
+            let wallX;
+            if (side === 0) wallX = posY + perpWallDist * rayDirY;
+            else           wallX = posX + perpWallDist * rayDirX;
+            wallX -= Math.floor(wallX);
+
+            // Vertical Mortar (Grid pattern)
+            if (Math.abs(wallX - 0.0) < 0.02 || Math.abs(wallX - 0.5) < 0.02) {
+                baseR *= 0.6; baseG *= 0.6; baseB *= 0.6;
+            }
+            // Noise
+            if (Math.random() < 0.1) {
+                baseR *= 0.9; baseG *= 0.9; baseB *= 0.9;
+            }
+        }
+
         // Distance Falloff (Fog)
-        let distFactor = 1.0 / (1.0 + perpWallDist * perpWallDist * (0.05 + fear * 0.15)); // Fog thickens with fear
+        let distFactor = 1.0 / (1.0 + perpWallDist * perpWallDist * (0.05 + insanity * 0.15)); // Fog thickens with insanity
         
         // Flashlight Logic
         let lightFactor = 0.5; // Ambient darkness (Brighter)
@@ -1789,16 +2188,34 @@ function draw() {
             let yEnd2 = Math.min(drawEnd, py2 + ph);
             if (yEnd2 > yStart2) ctx.fillRect(x, yStart2, 1, yEnd2 - yStart2);
         }
+
+        // Level 3: Horizontal Mortar (Overlay)
+        if (currentLevel === 3) {
+            ctx.fillStyle = `rgb(${Math.floor(r*0.6)}, ${Math.floor(g*0.6)}, ${Math.floor(b*0.6)})`;
+            let wallTop = -lineHeight / 2 + horizon + glitchY;
+            let rows = 8;
+            let rowH = lineHeight / rows;
+            let mortarH = Math.max(1, lineHeight * 0.02);
+
+            for(let i=1; i<rows; i++) {
+                let my = wallTop + i * rowH;
+                let yStart = Math.max(drawStart, my);
+                let yEnd = Math.min(drawEnd, my + mortarH);
+                if (yEnd > yStart) ctx.fillRect(x, yStart, 1, yEnd - yStart);
+            }
+        }
     }
 
     // Sprite Rendering
     let sprites = [];
-    orbs.forEach(o => { if (o.active) sprites.push({ x: o.x, y: o.y, type: 'orb' }); });
-    props.forEach(p => { sprites.push({ x: p.x, y: p.y, type: p.type }); });
-    batteries.forEach(b => { if (b.active) sprites.push({ x: b.x, y: b.y, type: 'battery' }); });
+    orbs.forEach(o => { if (o.active) sprites.push({ x: o.x, y: o.y, type: 'orb', obj: { z: 0.3 } }); });
+    props.forEach(p => { sprites.push({ x: p.x, y: p.y, type: p.type, obj: { z: 0 } }); });
+    batteries.forEach(b => { if (b.active) sprites.push({ x: b.x, y: b.y, type: 'battery', obj: { z: 0 } }); });
+    energyBars.forEach(eb => { if (eb.active) sprites.push({ x: eb.x, y: eb.y, type: 'energy_bar', obj: { z: 0 } }); });
+    almondWaters.forEach(aw => { if (aw.active) sprites.push({ x: aw.x, y: aw.y, type: 'almond_water', obj: { z: 0 } }); });
     entities.forEach(e => { if(e.opacity > 0.01) sprites.push({ x: e.x, y: e.y, type: 'entity', obj: e }); });
     steamParticles.forEach(sp => { sprites.push({ x: sp.x, y: sp.y, type: 'steam', obj: sp }); });
-    if (exitPos && exitOpen) sprites.push({ x: exitPos.x, y: exitPos.y, type: 'exit' });
+    if (exitPos && exitOpen) sprites.push({ x: exitPos.x, y: exitPos.y, type: 'exit', obj: { z: 0.5 } });
 
     sprites.sort((a, b) => {
         let da = (posX - a.x)*(posX - a.x) + (posY - a.y)*(posY - a.y);
@@ -1811,24 +2228,61 @@ function draw() {
         let spriteX = sprite.x - posX;
         let spriteY = sprite.y - posY;
 
-        // Entity Jitter (Vibrates when close)
+        // Entity Jitter (Vibrates with insanity)
         if (sprite.type === 'entity') {
-            spriteX += (Math.random() - 0.5) * fear * 0.1;
+            spriteX += (Math.random() - 0.5) * insanity * 0.1;
         }
 
         let invDet = 1.0 / (planeX * dirY - dirX * planeY);
         let transformX = invDet * (dirY * spriteX - dirX * spriteY);
         let transformY = invDet * (-planeY * spriteX + planeX * spriteY); 
 
-        if (transformY <= 0) continue;
+        if (transformY <= 0.1) continue; // Prevent sprites becoming huge when too close (near clip plane)
 
         let spriteScreenX = Math.floor((SCREEN_WIDTH / 2) * (1 + transformX / transformY));
-        let spriteHeight = Math.abs(Math.floor(SCREEN_HEIGHT / transformY));
-        let spriteWidth = Math.abs(Math.floor(SCREEN_HEIGHT / transformY)); 
+        
+        // Use a base height calculation before scaling custom image sprites
+        let baseHeight = Math.abs(Math.floor(SCREEN_HEIGHT / transformY));
+        let spriteHeight = baseHeight;
+        let spriteWidth = baseHeight; 
 
-        let drawStartY = -spriteHeight / 2 + horizon;
+        // Identify custom image sprites
+        let imgToDraw = null;
+        if (sprite.type === 'battery' && imgBattery.complete && imgBattery.naturalWidth > 0) imgToDraw = imgBattery;
+        else if (sprite.type === 'energy_bar' && imgEnergyBar.complete && imgEnergyBar.naturalWidth > 0) imgToDraw = imgEnergyBar;
+        else if (sprite.type === 'almond_water' && imgAlmondWater.complete && imgAlmondWater.naturalWidth > 0) imgToDraw = imgAlmondWater;
+
+        let floorAlignOffset = 0;
+        if (imgToDraw) {
+            let aspect = imgToDraw.width / imgToDraw.height;
+            let scale = 0.4; // 40% of standard cell scale
+            if (sprite.type === 'energy_bar') scale = 0.5; // Slightly longer
+            
+            if (aspect > 1) { // Wide
+                spriteWidth = baseHeight * scale;
+                spriteHeight = spriteWidth / aspect;
+            } else { // Tall
+                spriteHeight = baseHeight * scale;
+                spriteWidth = spriteHeight * aspect;
+            }
+            
+            // Adjust offset to make the scaled sprite anchor to the floor correctly
+            floorAlignOffset = spriteHeight / 2;
+        }
+
+        // Vertical positioning with Z-axis
+        let vMove = 0;
+        if (sprite.obj && sprite.obj.z !== undefined) {
+            vMove = (sprite.obj.z - 0.5) * baseHeight;
+        }
+
+        // Apply floor alignment adjustment for scaled sprites
+        vMove += floorAlignOffset;
+
+        let drawStartY = -spriteHeight / 2 + horizon - vMove;
+        let trueStartY = drawStartY; // Record pure position for rendering calculation
         if (drawStartY < 0) drawStartY = 0;
-        let drawEndY = spriteHeight / 2 + horizon;
+        let drawEndY = spriteHeight / 2 + horizon - vMove;
         if (drawEndY >= SCREEN_HEIGHT) drawEndY = SCREEN_HEIGHT - 1;
 
         let drawStartX = -spriteWidth / 2 + spriteScreenX;
@@ -1846,7 +2300,22 @@ function draw() {
             if (transformY < zBuffer[stripe]) {
                 let progress = (stripe - drawStartX) / spriteWidth; // 0 to 1 across sprite
                 
-                if (sprite.type === 'orb') {
+                if (imgToDraw) {
+                    let texX = Math.floor(progress * imgToDraw.width);
+                    if (texX >= 0 && texX < imgToDraw.width) {
+                        let dHeight = drawEndY - drawStartY;
+                        let yOffset = drawStartY - trueStartY; 
+                        
+                        let scaleY = imgToDraw.height / spriteHeight;
+                        let sY = yOffset * scaleY;
+                        let sH = dHeight * scaleY;
+
+                        if (sH > 0 && sH + sY <= imgToDraw.height + 0.1) {
+                            ctx.drawImage(imgToDraw, texX, sY, 1, sH, stripe, drawStartY, 1, dHeight);
+                        }
+                    }
+                }
+                else if (sprite.type === 'orb') {
                      // Note Visuals (Floating Paper)
                      let dx = progress - 0.5;
                      if (Math.abs(dx) < 0.2) { // Width
@@ -1875,50 +2344,82 @@ function draw() {
                     let dim = flashlightOn ? 1.0 : 0.3;
                     
                     if (sprite.type === 'chair') {
-                        // Wooden Chair
-                        if (Math.abs(dx) < 0.35) {
-                            // Legs
-                            if ((Math.abs(dx) > 0.25) && (stripe % 4 !== 0)) { 
-                                 ctx.fillStyle = `rgb(${60*dim}, ${40*dim}, ${20*dim})`;
-                                 ctx.fillRect(stripe, drawStartY + spriteHeight * 0.5, 1, spriteHeight * 0.5);
+                        // Wooden Chair - 3D Fake
+                        if (Math.abs(dx) < 0.25) {
+                            let r = 70*dim, g = 45*dim, b = 25*dim;
+                            
+                            // Back Legs (Inner, Darker)
+                            if (Math.abs(dx) > 0.15 && Math.abs(dx) < 0.22) {
+                                ctx.fillStyle = `rgb(${r*0.6}, ${g*0.6}, ${b*0.6})`;
+                                ctx.fillRect(stripe, drawStartY + spriteHeight * 0.55, 1, spriteHeight * 0.35);
                             }
-                            // Seat
-                            ctx.fillStyle = `rgb(${80*dim}, ${50*dim}, ${30*dim})`;
-                            ctx.fillRect(stripe, drawStartY + spriteHeight * 0.5, 1, spriteHeight * 0.1);
-                            // Back
-                            if (Math.abs(dx) < 0.3 && (Math.floor(dx * 20) % 2 !== 0)) {
-                                // gap
-                            } else {
-                                ctx.fillStyle = `rgb(${70*dim}, ${45*dim}, ${25*dim})`;
-                                ctx.fillRect(stripe, drawStartY + spriteHeight * 0.1, 1, spriteHeight * 0.4);
+
+                            // Back Rest (Top half)
+                            if (Math.abs(dx) < 0.2) {
+                                let isSlat = (Math.floor((dx + 0.5) * 20) % 2 === 0) || Math.abs(dx) > 0.15; 
+                                if (isSlat) {
+                                    ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+                                    ctx.fillRect(stripe, drawStartY, 1, spriteHeight * 0.5);
+                                }
+                            }
+
+                            // Seat (Middle)
+                            if (Math.abs(dx) < 0.22) {
+                                // Top Surface (Light)
+                                ctx.fillStyle = `rgb(${r*1.3}, ${g*1.3}, ${b*1.3})`;
+                                ctx.fillRect(stripe, drawStartY + spriteHeight * 0.5, 1, spriteHeight * 0.04);
+                                // Front Edge (Dark)
+                                ctx.fillStyle = `rgb(${r*0.8}, ${g*0.8}, ${b*0.8})`;
+                                ctx.fillRect(stripe, drawStartY + spriteHeight * 0.54, 1, spriteHeight * 0.06);
+                            }
+
+                            // Front Legs (Outer, Normal)
+                            if (Math.abs(dx) > 0.18) {
+                                ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+                                ctx.fillRect(stripe, drawStartY + spriteHeight * 0.6, 1, spriteHeight * 0.4);
                             }
                         }
                     }
                     else if (sprite.type === 'table') {
-                         // Table
-                         if ((Math.abs(dx) > 0.35 && Math.abs(dx) < 0.45)) {
-                             ctx.fillStyle = `rgb(${50*dim}, ${30*dim}, ${10*dim})`;
-                             ctx.fillRect(stripe, drawStartY + spriteHeight * 0.6, 1, spriteHeight * 0.4);
-                         }
-                         if (Math.abs(dx) < 0.5) {
-                             ctx.fillStyle = `rgb(${90*dim}, ${60*dim}, ${40*dim})`;
-                             ctx.fillRect(stripe, drawStartY + spriteHeight * 0.55, 1, spriteHeight * 0.1);
+                         // Table - 3D Fake
+                         if (Math.abs(dx) < 0.45) {
+                             let r = 90*dim, g = 60*dim, b = 40*dim;
+
+                             // Back Legs (Inner, Darker)
+                             if (Math.abs(dx) > 0.25 && Math.abs(dx) < 0.32) {
+                                 ctx.fillStyle = `rgb(${r*0.5}, ${g*0.5}, ${b*0.5})`;
+                                 ctx.fillRect(stripe, drawStartY + spriteHeight * 0.6, 1, spriteHeight * 0.35);
+                             }
+
+                             // Front Legs (Outer, Normal)
+                             if (Math.abs(dx) > 0.38) {
+                                 ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+                                 ctx.fillRect(stripe, drawStartY + spriteHeight * 0.65, 1, spriteHeight * 0.35);
+                             }
+
+                             // Table Top
+                             // Top Surface (Light)
+                             ctx.fillStyle = `rgb(${r*1.2}, ${g*1.2}, ${b*1.2})`;
+                             ctx.fillRect(stripe, drawStartY + spriteHeight * 0.55, 1, spriteHeight * 0.05);
+                             
+                             // Side/Front Edge (Dark)
+                             ctx.fillStyle = `rgb(${r*0.8}, ${g*0.8}, ${b*0.8})`;
+                             ctx.fillRect(stripe, drawStartY + spriteHeight * 0.60, 1, spriteHeight * 0.05);
                          }
                     }
                     else if (sprite.type === 'plant') {
                         // Pot
-                        if (Math.abs(dx) < 0.2) {
+                        if (Math.abs(dx) < 0.15) {
                             ctx.fillStyle = `rgb(${150*dim}, ${80*dim}, ${40*dim})`;
                             ctx.fillRect(stripe, drawStartY + spriteHeight * 0.7, 1, spriteHeight * 0.3);
                         }
                         // Greenery
-                        if (Math.abs(dx) < 0.35) {
-                            let leafY = drawStartY + spriteHeight * 0.2;
-                            let leafH = spriteHeight * 0.5;
-                            if (Math.sin(dx * 30 + sprite.x * 10) > -0.2) {
-                                ctx.fillStyle = `rgb(${20*dim}, ${100*dim}, ${20*dim})`;
-                                ctx.fillRect(stripe, leafY, 1, leafH);
-                            }
+                        if (Math.abs(dx) < 0.3) {
+                            // Add some texture variation based on dx without using screen pixels
+                            let noise = Math.sin(dx * 50); 
+                            let gVal = 100 + noise * 20;
+                            ctx.fillStyle = `rgb(${20*dim}, ${gVal*dim}, ${20*dim})`;
+                            ctx.fillRect(stripe, drawStartY + spriteHeight * 0.2, 1, spriteHeight * 0.5);
                         }
                     }
                     else if (sprite.type === 'lamp') {
@@ -1928,26 +2429,9 @@ function draw() {
                             ctx.fillRect(stripe, drawStartY + spriteHeight * 0.2, 1, spriteHeight * 0.8);
                         }
                         // Shade
-                        if (Math.abs(dx) < 0.25) {
+                        if (Math.abs(dx) < 0.2) {
                             ctx.fillStyle = `rgb(${200*dim}, ${180*dim}, ${150*dim})`;
                             ctx.fillRect(stripe, drawStartY + spriteHeight * 0.1, 1, spriteHeight * 0.2);
-                        }
-                    }
-                }
-                else if (sprite.type === 'battery') {
-                    let dx = progress - 0.5;
-                    if (Math.abs(dx) < 0.15) {
-                        // Battery Body
-                        let batY = drawStartY + spriteHeight * 0.85;
-                        let batH = spriteHeight * 0.1;
-                        
-                        ctx.fillStyle = '#3f3'; // Green body
-                        ctx.fillRect(stripe, batY, 1, batH);
-                        
-                        // Cap
-                        if (Math.abs(dx) < 0.05) {
-                            ctx.fillStyle = '#ccc'; // Silver cap
-                            ctx.fillRect(stripe, batY - spriteHeight * 0.015, 1, spriteHeight * 0.015);
                         }
                     }
                 }
@@ -1970,7 +2454,7 @@ function draw() {
                     // ENTITY VISUALS - The "Smiler" (Updated to match Jumpscare)
                     let ent = sprite.obj;
                     let dx = progress - 0.5;
-                    let glow = flashlightOn ? 1.0 : (0.8 + Math.sin(Date.now()/100)*0.2);
+                    let glow = flashlightOn ? 1.0 : (0.8 + Math.sin(Date.now() / 100) * 0.2);
                     let entAlpha = (ent.opacity !== undefined) ? ent.opacity : 1.0;
                     
                     // Ghostly Body (Transparent & Noisy)
@@ -2000,8 +2484,8 @@ function draw() {
                     // Smile (Deep U-shape with needle teeth)
                     if (Math.abs(dx) < 0.22) {
                         let nx = dx / 0.22; // -1 to 1
-                        // Deep U-shape curve
-                        let smileCurve = 0.65 - 0.3 * (nx * nx) * (1.0 + fear * 0.5); 
+                        // Deep U-shape curve, gets wider with insanity
+                        let smileCurve = 0.65 - 0.3 * (nx * nx) * (1.0 + insanity * 0.5); 
                         
                         let mouthH = 0.15; // Total mouth height area
                         let yMouthTop = drawStartY + (smileCurve - mouthH/2) * spriteHeight;
@@ -2053,8 +2537,8 @@ function draw() {
     }
     
     // Fear Vignette
-    if (fear > 0.2) {
-        ctx.fillStyle = `rgba(0,0,0,${(fear - 0.2) * 0.8})`;
+    if (insanity > 0.2) {
+        ctx.fillStyle = `rgba(0,0,0,${(insanity - 0.2) * 0.8})`;
         ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
     }
     ctx.restore();
@@ -2109,6 +2593,22 @@ function drawMinimap() {
         if(b.active) {
             miniCtx.fillStyle = '#0ff';
             miniCtx.fillRect(b.x * cellSize - 2, b.y * cellSize - 2, 4, 4);
+        }
+    });
+
+    // Energy Bars
+    energyBars.forEach(eb => {
+        if(eb.active) {
+            miniCtx.fillStyle = '#f90'; // Orange
+            miniCtx.fillRect(eb.x * cellSize - 2, eb.y * cellSize - 2, 4, 4);
+        }
+    });
+
+    // Almond Water
+    almondWaters.forEach(aw => {
+        if(aw.active) {
+            miniCtx.fillStyle = '#fefae0'; // Light Yellow
+            miniCtx.fillRect(aw.x * cellSize - 2, aw.y * cellSize - 2, 4, 4);
         }
     });
 
