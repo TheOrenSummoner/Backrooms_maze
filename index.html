@@ -168,6 +168,7 @@ const BATTERY_MAX = 100;
 const imgBattery = new Image(); imgBattery.src = 'Battery.webp';
 const imgEnergyBar = new Image(); imgEnergyBar.src = 'Energy Bar.webp';
 const imgAlmondWater = new Image(); imgAlmondWater.src = 'Almond Water.webp';
+const imgSmiler = new Image(); imgSmiler.src = 'Smiler.webp';
 
 const LEVEL_NOTES = [
     [ // Level 0
@@ -1333,46 +1334,11 @@ function triggerJumpscare() {
         sCtx.translate(-cx, -cy);
 
         // THE SMILER
-        
-        // Eyes - Small, piercing, glowing
-        sCtx.shadowBlur = 30;
-        sCtx.shadowColor = "white";
-        sCtx.fillStyle = "#fff";
-        
-        sCtx.beginPath();
-        sCtx.arc(cx - 100, cy - 50, 15, 0, Math.PI*2); // Left
-        sCtx.arc(cx + 100, cy - 50, 15, 0, Math.PI*2); // Right
-        sCtx.fill();
-        sCtx.shadowBlur = 0;
-
-        // The Smile - Wide, U-shaped, filled with needle teeth
-        sCtx.strokeStyle = "#fff";
-        sCtx.lineWidth = 5;
-        
-        sCtx.beginPath();
-        sCtx.moveTo(cx - 250, cy + 50);
-        sCtx.bezierCurveTo(cx - 150, cy + 350, cx + 150, cy + 350, cx + 250, cy + 50);
-        sCtx.stroke();
-
-        // Teeth - Needle-like, messy
-        sCtx.fillStyle = "#fff";
-        sCtx.beginPath();
-        for (let i = 0; i < 40; i++) {
-            let t = i / 40;
-            let tx = (cx - 220) + t * 440;
-            let ty = cy + 280 - Math.sin(t * Math.PI) * 100; // Curve bottom
-            let h = 20 + Math.random() * 40;
-            sCtx.moveTo(tx, ty);
-            sCtx.lineTo(tx + 5, ty - h);
-            sCtx.lineTo(tx + 10, ty);
-            
-            // Top teeth
-            let ty2 = cy + 100 + Math.sin(t * Math.PI) * 50;
-            sCtx.moveTo(tx, ty2);
-            sCtx.lineTo(tx + 5, ty2 + h);
-            sCtx.lineTo(tx + 10, ty2);
+        if (imgSmiler.complete && imgSmiler.naturalWidth > 0) {
+            let imgWidth = sCanvas.width;
+            let imgHeight = imgWidth * (imgSmiler.height / imgSmiler.width);
+            sCtx.drawImage(imgSmiler, cx - imgWidth / 2, cy - imgHeight / 2, imgWidth, imgHeight);
         }
-        sCtx.fill();
 
         // Glitch lines
         sCtx.fillStyle = "rgba(255, 255, 255, 0.1)";
@@ -1765,6 +1731,7 @@ function update(dt) {
     }
 
     // 3. Entity AI - Psychological
+    let anyEntityVisible = false;
     entities.forEach(entity => {
         // Dormancy Logic (Long stretches of absence)
         if (entity.dormantTimer > 0) {
@@ -1807,7 +1774,7 @@ function update(dt) {
 
         // New Sanity Drain Logic
         if (isVisible) {
-            sanity = Math.max(0, sanity - SANITY_DRAIN * dt);
+            anyEntityVisible = true;
         }
 
         // Pathfinding Update
@@ -1968,6 +1935,10 @@ function update(dt) {
             entity.sound.panner.pan.value = Math.max(-1, Math.min(1, cross));
         }
     });
+
+    if (anyEntityVisible) {
+        sanity = Math.max(0, sanity - SANITY_DRAIN * dt);
+    }
 
     // Global Sanity Effects
     let insanity = (SANITY_MAX - sanity) / SANITY_MAX; // 0.0 to 1.0
@@ -2251,6 +2222,7 @@ function draw() {
         if (sprite.type === 'battery' && imgBattery.complete && imgBattery.naturalWidth > 0) imgToDraw = imgBattery;
         else if (sprite.type === 'energy_bar' && imgEnergyBar.complete && imgEnergyBar.naturalWidth > 0) imgToDraw = imgEnergyBar;
         else if (sprite.type === 'almond_water' && imgAlmondWater.complete && imgAlmondWater.naturalWidth > 0) imgToDraw = imgAlmondWater;
+        else if (sprite.type === 'entity' && imgSmiler.complete && imgSmiler.naturalWidth > 0) imgToDraw = imgSmiler;
 
         let floorAlignOffset = 0;
         if (imgToDraw) {
@@ -2258,6 +2230,8 @@ function draw() {
             let scale = 0.4; // 40% of standard cell scale
             if (sprite.type === 'energy_bar') scale = 0.5; // Slightly longer
             
+            if (sprite.type === 'entity') scale = 1.0;
+
             if (aspect > 1) { // Wide
                 spriteWidth = baseHeight * scale;
                 spriteHeight = spriteWidth / aspect;
@@ -2267,7 +2241,9 @@ function draw() {
             }
             
             // Adjust offset to make the scaled sprite anchor to the floor correctly
-            floorAlignOffset = spriteHeight / 2;
+            if (sprite.type !== 'entity') {
+                floorAlignOffset = spriteHeight / 2;
+            }
         }
 
         // Vertical positioning with Z-axis
@@ -2311,7 +2287,13 @@ function draw() {
                         let sH = dHeight * scaleY;
 
                         if (sH > 0 && sH + sY <= imgToDraw.height + 0.1) {
+                            if (sprite.type === 'entity') {
+                                ctx.globalAlpha = sprite.obj.opacity;
+                            }
                             ctx.drawImage(imgToDraw, texX, sY, 1, sH, stripe, drawStartY, 1, dHeight);
+                            if (sprite.type === 'entity') {
+                                ctx.globalAlpha = 1.0; // Reset
+                            }
                         }
                     }
                 }
@@ -2450,63 +2432,6 @@ function draw() {
                         }
                     }
                 } 
-                else if (sprite.type === 'entity') {
-                    // ENTITY VISUALS - The "Smiler" (Updated to match Jumpscare)
-                    let ent = sprite.obj;
-                    let dx = progress - 0.5;
-                    let glow = flashlightOn ? 1.0 : (0.8 + Math.sin(Date.now() / 100) * 0.2);
-                    let entAlpha = (ent.opacity !== undefined) ? ent.opacity : 1.0;
-                    
-                    // Ghostly Body (Transparent & Noisy)
-                    let alpha = 0;
-                    if (Math.abs(dx) < 0.25) {
-                        // Soft falloff from center
-                        let fade = 1.0 - Math.pow(Math.abs(dx) / 0.25, 2);
-                        alpha = 0.85 * fade;
-                        // Static/Noise texture
-                        if (Math.random() < 0.3) alpha *= 0.5;
-                    }
-                    ctx.fillStyle = `rgba(0,0,0,${alpha * entAlpha})`;
-                    if (alpha > 0.05) {
-                        // Smoky edges (vertical jitter)
-                        let jitter = (Math.random() - 0.5) * spriteHeight * 0.03;
-                        ctx.fillRect(stripe, drawStartY + spriteHeight*0.1 + jitter, 1, spriteHeight*0.8);
-                    }
-
-                    // Eyes (Small, piercing, glowing)
-                    if (Math.abs(Math.abs(dx) - 0.09) < 0.02) {
-                         let yEye = drawStartY + 0.28 * spriteHeight;
-                         let hEye = 0.025 * spriteHeight; // Smaller, sharper
-                         ctx.fillStyle = `rgba(255, 255, 255, ${glow * entAlpha})`;
-                         ctx.fillRect(stripe, yEye, 1, hEye);
-                    }
-
-                    // Smile (Deep U-shape with needle teeth)
-                    if (Math.abs(dx) < 0.22) {
-                        let nx = dx / 0.22; // -1 to 1
-                        // Deep U-shape curve, gets wider with insanity
-                        let smileCurve = 0.65 - 0.3 * (nx * nx) * (1.0 + insanity * 0.5); 
-                        
-                        let mouthH = 0.15; // Total mouth height area
-                        let yMouthTop = drawStartY + (smileCurve - mouthH/2) * spriteHeight;
-                        let yMouthBot = drawStartY + (smileCurve + mouthH/2) * spriteHeight;
-                        
-                        // Needle Teeth (Sine wave approximation for spikes)
-                        let toothLen = (yMouthBot - yMouthTop) * 0.45;
-                        let toothShape = Math.abs(Math.sin(dx * 100)); // 0..1 spikes
-                        
-                        ctx.fillStyle = `rgba(255, 255, 255, ${glow * entAlpha})`;
-                        
-                        // Top Tooth
-                        let tH = toothLen * (0.2 + 0.8 * toothShape);
-                        ctx.fillRect(stripe, yMouthTop, 1, tH);
-                        
-                        // Bottom Tooth (Offset phase for gnashing look)
-                        let toothShapeBot = Math.abs(Math.sin(dx * 100 + Math.PI/2));
-                        let bH = toothLen * (0.2 + 0.8 * toothShapeBot);
-                        ctx.fillRect(stripe, yMouthBot - bH, 1, bH);
-                    }
-                }
                 else if (sprite.type === 'steam') {
                     let sp = sprite.obj;
                     // Calculate screen Y based on Z height
