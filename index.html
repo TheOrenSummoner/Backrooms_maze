@@ -261,31 +261,31 @@ const LEVEL_STYLES = [
     { // Level 0: The Lobby (Mono-Yellow)
         name: "Level 0: The Lobby",
         wall: [210, 190, 120], wallDark: [160, 140, 90],
-        ceil: ['#1a1a10', '#444433'], floor: ['#444433', '#222211'],
+        ceil: [112, 107, 94], floor: [68, 68, 51], // Stained ceiling
         hum: 60
     },
     { // Level 1: Habitable Zone (Industrial Grey)
         name: "Level 1: Habitable Zone",
         wall: [130, 130, 135], wallDark: [90, 90, 95],
-        ceil: ['#101010', '#202020'], floor: ['#202020', '#101010'],
+        ceil: [69, 69, 69], floor: [32, 32, 32], // Concrete ceiling
         hum: 40 // Lower rumble
     },
     { // Level 2: Pipe Dreams (Rusty/Dark)
         name: "Level 2: Pipe Dreams",
         wall: [100, 80, 60], wallDark: [70, 50, 30],
-        ceil: ['#050500', '#1a1a00'], floor: ['#1a1a00', '#0a0a00'],
+        ceil: [61, 47, 27], floor: [26, 26, 0], // Rusty metal ceiling
         hum: 100 // Steam hiss
     },
     { // Level 3: Electrical Station
         name: "Level 3: Electrical Station",
         wall: [139, 69, 19], wallDark: [100, 40, 10], // Brick Red
-        ceil: ['#000000', '#1a1a1a'], floor: ['#2a2a2a', '#111111'], // Dark Concrete
+        ceil: [37, 37, 37], floor: [42, 42, 42], // Dark grid/metal ceiling
         hum: 150 // High voltage hum
     },
     { // Level 4: Abandoned Office
         name: "Level 4: Abandoned Office",
         wall: [200, 200, 210], wallDark: [150, 150, 160], // Office White/Grey
-        ceil: ['#dddddd', '#aaaaaa'], floor: ['#555555', '#333333'], // Carpet
+        ceil: [209, 209, 199], floor: [85, 85, 85], // Aged office tile
         hum: 45 // Quiet AC hum
     }
 ];
@@ -319,6 +319,7 @@ let turnEventCooldown = 0;
 let pipeEmitters = [];
 let pipeMap = {};
 let steamParticles = [];
+let hallucinations = [];
 
 // Player
 let posX = 0, posY = 0; 
@@ -330,6 +331,8 @@ let flashlightOn = true;
 let flashLightFlicker = 1.0;
 let headBobPhase = 0;
 let headBobOffset = 0;
+let minimapNoiseCanvas = null;
+let minimapNoiseCtx = null;
 let noiseCanvas = null;
 let sanity = SANITY_MAX;
 
@@ -361,6 +364,11 @@ window.onload = () => {
     miniCanvas.width = 150;
     miniCanvas.height = 150;
     miniCtx = miniCanvas.getContext('2d');
+
+    minimapNoiseCanvas = document.createElement('canvas');
+    minimapNoiseCanvas.width = 150;
+    minimapNoiseCanvas.height = 150;
+    minimapNoiseCtx = minimapNoiseCanvas.getContext('2d');
 
     // Pre-generate Noise Texture
     noiseCanvas = document.createElement('canvas');
@@ -742,20 +750,53 @@ function hasLineOfSight(x1, y1, x2, y2) {
     let dx = x2 - x1;
     let dy = y2 - y1;
     let dist = Math.sqrt(dx*dx + dy*dy);
-    if (dist === 0) return true;
+    if (dist < 0.1) return true; // Reduced tolerance to prevent bleeding
 
     let stepX = dx / dist;
     let stepY = dy / dist;
     
-    // Check points along the line
-    for (let d = 0; d < dist; d += 0.4) {
+    // Check points along the line with higher precision
+    // Start a bit away to avoid self-collision
+    for (let d = 0.1; d < dist - 0.1; d += 0.1) {
         let checkX = x1 + stepX * d;
         let checkY = y1 + stepY * d;
-        if (worldMap[Math.floor(checkX)][Math.floor(checkY)] !== 0) {
-            return false; // Hit a wall
+        let mapX = Math.floor(checkX);
+        let mapY = Math.floor(checkY);
+
+        // Bounds check to prevent crash
+        if (mapX < 0 || mapX >= worldMap.length || !worldMap[mapX] || mapY < 0 || mapY >= worldMap[mapX].length) {
+            return false; // Treat out-of-bounds as a wall
+        } else if (worldMap[mapX][mapY] !== 0) {
+            return false; // Hit an actual wall
         }
     }
     return true; // No walls
+}
+
+function getLightAtPoint(x, y, z) {
+    let totalR = 0, totalG = 0, totalB = 0;
+    if (lights.length === 0) return [0,0,0];
+
+    lights.forEach(light => {
+        let dx = light.x - x;
+        let dy = light.y - y;
+        let dz = light.z - z;
+        let distSq = dx*dx + dy*dy + dz*dz;
+        let radiusSq = light.radius * light.radius;
+
+        if (distSq < radiusSq) {
+            // Use 2D line of sight for performance. Prevents light bleeding through walls.
+            if (hasLineOfSight(x, y, light.x, light.y)) {
+                let falloff = 1.0 - (Math.sqrt(distSq) / light.radius);
+                let intensity = light.intensity * falloff * falloff; // Squared for faster falloff
+
+                totalR += light.color[0] * intensity;
+                totalG += light.color[1] * intensity;
+                totalB += light.color[2] * intensity;
+            }
+        }
+    });
+    return [totalR, totalG, totalB];
 }
 
 function addToInventory(type) {
@@ -890,6 +931,7 @@ function generateLevel() {
     pipeMap = {};
     steamParticles = [];
     lights = [];
+    hallucinations = [];
     props = [];
     
     if (currentLevel === 2) {
@@ -1200,6 +1242,19 @@ function generateLevel() {
             }
         }
     }
+
+    // Create static lights from lamp props
+    lights = [];
+    props.forEach(p => {
+        if (p.type === 'lamp') {
+            lights.push({
+                x: p.x, y: p.y, z: 0.8, // height of light source
+                radius: 5.0,
+                intensity: 0.8,
+                color: [255, 200, 150] // Warm light
+            });
+        }
+    });
 
     // Batteries
     let batCount = Math.max(2, Math.floor(mapWidth * mapHeight * 0.03));
@@ -1512,6 +1567,33 @@ function update(dt) {
             sp.life -= dt; sp.size += dt * 0.6;
             if (sp.life <= 0 || sp.z > 1.0) steamParticles.splice(i, 1);
         }
+    }
+
+    // Hallucinations
+    let insanity = (SANITY_MAX - sanity) / SANITY_MAX;
+    if (insanity > 0.3 && Math.random() < (insanity - 0.3) * dt * 0.5) {
+        if (hallucinations.length < 4) { // Limit concurrent hallucinations
+            // Spawn it somewhere around the player, preferably at the edge of their FOV
+            let angleOffset = (Math.random() > 0.5 ? 1 : -1) * (Math.PI / 4 + Math.random() * Math.PI / 4);
+            let playerAngle = Math.atan2(dirY, dirX);
+            let angle = playerAngle + angleOffset;
+            let dist = 4 + Math.random() * 8; 
+            let hx = posX + Math.cos(angle) * dist;
+            let hy = posY + Math.sin(angle) * dist;
+
+            if (worldMap[Math.floor(hx)] && worldMap[Math.floor(hx)][Math.floor(hy)] === 0) {
+                hallucinations.push({
+                    x: hx, y: hy,
+                    life: 0.8 + Math.random() * 0.7, // Lasts for a short time
+                    maxLife: 1.5,
+                    type: 'shadow' 
+                });
+            }
+        }
+    }
+    for (let i = hallucinations.length - 1; i >= 0; i--) {
+        hallucinations[i].life -= dt;
+        if (hallucinations[i].life <= 0) hallucinations.splice(i, 1);
     }
 
     // 0. Flashlight & Stamina
@@ -1940,12 +2022,35 @@ function update(dt) {
         }
     });
 
+    // Lamp flickering from entity proximity
+    lights.forEach(light => {
+        // Reset intensity to default unless an entity is close
+        light.intensity = 0.8; // Default intensity
+
+        entities.forEach(entity => {
+            if (entity.dormantTimer > 0 || entity.opacity < 0.1) return; // Skip dormant/invisible entities
+
+            let dx = light.x - entity.x;
+            let dy = light.y - entity.y;
+            let distSq = dx*dx + dy*dy;
+            let flickerRadius = 4.0;
+
+            if (distSq < flickerRadius * flickerRadius) {
+                // Entity is near this lamp
+                let dist = Math.sqrt(distSq);
+                let flickerAmount = (1.0 - (dist / flickerRadius)); // Stronger when closer
+                light.intensity = 0.8 - (Math.random() * 0.7 * flickerAmount);
+                light.intensity = Math.max(0.0, light.intensity); // Allow it to go out completely for a frame
+            }
+        });
+    });
+
     if (anyEntityVisible) {
         sanity = Math.max(0, sanity - SANITY_DRAIN * dt);
     }
 
     // Global Sanity Effects
-    let insanity = (SANITY_MAX - sanity) / SANITY_MAX; // 0.0 to 1.0
+    insanity = (SANITY_MAX - sanity) / SANITY_MAX; // 0.0 to 1.0
 
     if (audioCtx && masterFilter) {
         let cutoff = 22000 - (insanity * 18000);
@@ -2022,23 +2127,65 @@ function draw() {
     // Get Current Level Style
     let style = LEVEL_STYLES[currentLevel % LEVEL_STYLES.length];
 
-    // Ceiling
-    let ceilingGrad = ctx.createLinearGradient(0, 0, 0, horizon);
-    ceilingGrad.addColorStop(0, style.ceil[0]);
-    ceilingGrad.addColorStop(1, style.ceil[1]);
-    ctx.fillStyle = ceilingGrad;
-    ctx.fillRect(0, 0, SCREEN_WIDTH, horizon);
-    
-    // Floor
-    let floorGrad = ctx.createLinearGradient(0, horizon, 0, SCREEN_HEIGHT);
-    floorGrad.addColorStop(0, style.floor[0]);
-    floorGrad.addColorStop(1, style.floor[1]);
-    ctx.fillStyle = floorGrad;
-    ctx.fillRect(0, horizon, SCREEN_WIDTH, SCREEN_HEIGHT - horizon);
+    // Draw Ceiling and Floor with Distance Fog (Scanline rendering)
+    let insanity = (SANITY_MAX - sanity) / SANITY_MAX;
+    let lightFactorBase = flashlightOn ? 1.0 * flashLightFlicker : 0.5;
+
+    const CHUNK_SIZE = 16; // Draw floor/ceiling in chunks for performance
+
+    // Ceiling (Top to Horizon)
+    for (let y = 0; y < horizon; y++) {
+        let p = horizon - y;
+        let rowDistance = (0.5 * SCREEN_HEIGHT) / p;
+        
+        let distFactor = 1.0 / (1.0 + rowDistance * rowDistance * (0.05 + insanity * 0.15));
+        let baseR = style.ceil[0] * distFactor * lightFactorBase;
+        let baseG = style.ceil[1] * distFactor * lightFactorBase;
+        let baseB = style.ceil[2] * distFactor * lightFactorBase;
+
+        for (let x = 0; x < SCREEN_WIDTH; x += CHUNK_SIZE) {
+            let cameraX = 2 * (x + CHUNK_SIZE/2) / SCREEN_WIDTH - 1;
+            let worldX = posX + rowDistance * (dirX + planeX * cameraX);
+            let worldY = posY + rowDistance * (dirY + planeY * cameraX);
+
+            let lampLight = getLightAtPoint(worldX, worldY, 1.0); // Ceiling is at z=1.0
+            let r = baseR + lampLight[0];
+            let g = baseG + lampLight[1];
+            let b = baseB + lampLight[2];
+
+            ctx.fillStyle = `rgb(${Math.floor(r)},${Math.floor(g)},${Math.floor(b)})`;
+            ctx.fillRect(x, y, CHUNK_SIZE, 1);
+        }
+    }
+
+    // Floor (Horizon to Bottom)
+    for (let y = Math.floor(horizon); y < SCREEN_HEIGHT; y++) {
+        let p = y - horizon;
+        if (p === 0) p = 1; 
+        let rowDistance = (0.5 * SCREEN_HEIGHT) / p;
+        
+        let distFactor = 1.0 / (1.0 + rowDistance * rowDistance * (0.05 + insanity * 0.15));
+        let baseR = style.floor[0] * distFactor * lightFactorBase;
+        let baseG = style.floor[1] * distFactor * lightFactorBase;
+        let baseB = style.floor[2] * distFactor * lightFactorBase;
+        
+        for (let x = 0; x < SCREEN_WIDTH; x += CHUNK_SIZE) {
+            let cameraX = 2 * (x + CHUNK_SIZE/2) / SCREEN_WIDTH - 1;
+            let worldX = posX + rowDistance * (dirX + planeX * cameraX);
+            let worldY = posY + rowDistance * (dirY + planeY * cameraX);
+
+            let lampLight = getLightAtPoint(worldX, worldY, 0.0); // Floor is at z=0.0
+            let r = baseR + lampLight[0];
+            let g = baseG + lampLight[1];
+            let b = baseB + lampLight[2];
+
+            ctx.fillStyle = `rgb(${Math.floor(r)},${Math.floor(g)},${Math.floor(b)})`;
+            ctx.fillRect(x, y, CHUNK_SIZE, 1);
+        }
+    }
 
     // Raycasting
     zBuffer = new Array(SCREEN_WIDTH).fill(0);
-    let insanity = (SANITY_MAX - sanity) / SANITY_MAX;
 
     for (let x = 0; x < SCREEN_WIDTH; x += 1) { // Optimization: Res 1
         let cameraX = 2 * x / SCREEN_WIDTH - 1;
@@ -2140,6 +2287,14 @@ function draw() {
         let g = baseG * distFactor * lightFactor; 
         let b = baseB * distFactor * lightFactor;
 
+        // Add static lamp light
+        let hitX = posX + rayDirX * perpWallDist;
+        let hitY = posY + rayDirY * perpWallDist;
+        let lampLight = getLightAtPoint(hitX, hitY, 0.5); // Check light at mid-wall height
+        r += lampLight[0];
+        g += lampLight[1];
+        b += lampLight[2];
+
         ctx.fillStyle = `rgb(${Math.floor(r)}, ${Math.floor(g)}, ${Math.floor(b)})`;
         ctx.fillRect(x, drawStart, 1, drawEnd - drawStart);
 
@@ -2179,6 +2334,28 @@ function draw() {
                 if (yEnd > yStart) ctx.fillRect(x, yStart, 1, yEnd - yStart);
             }
         }
+
+        // Ambient Occlusion (Corner Shadows)
+        // Adds depth where walls meet ceiling/floor
+        let shadowH = Math.ceil(lineHeight * 0.12); 
+        if (shadowH > 0) {
+            // Ceiling Corner
+            if (drawStart > 0) {
+                let grad = ctx.createLinearGradient(0, drawStart - shadowH, 0, drawStart);
+                grad.addColorStop(0, 'rgba(0,0,0,0)');
+                grad.addColorStop(1, 'rgba(0,0,0,0.5)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(x, Math.max(0, drawStart - shadowH), 1, shadowH);
+            }
+            // Floor Corner
+            if (drawEnd < SCREEN_HEIGHT - 1) {
+                let grad = ctx.createLinearGradient(0, drawEnd, 0, drawEnd + shadowH);
+                grad.addColorStop(0, 'rgba(0,0,0,0.5)');
+                grad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(x, drawEnd, 1, shadowH);
+            }
+        }
     }
 
     // Sprite Rendering
@@ -2190,6 +2367,7 @@ function draw() {
     almondWaters.forEach(aw => { if (aw.active) sprites.push({ x: aw.x, y: aw.y, type: 'almond_water', obj: { z: 0 } }); });
     entities.forEach(e => { if(e.opacity > 0.01) sprites.push({ x: e.x, y: e.y, type: 'entity', obj: e }); });
     steamParticles.forEach(sp => { sprites.push({ x: sp.x, y: sp.y, type: 'steam', obj: sp }); });
+    hallucinations.forEach(h => { sprites.push({ x: h.x, y: h.y, type: h.type, obj: h }); });
     if (exitPos && exitOpen) sprites.push({ x: exitPos.x, y: exitPos.y, type: 'exit', obj: { z: 0.5 } });
 
     sprites.sort((a, b) => {
@@ -2342,6 +2520,20 @@ function draw() {
                             }
                         }
                      }
+                }
+                else if (sprite.type === 'shadow') {
+                    // A tall, dark, distorted figure
+                    let lifeRatio = sprite.obj.life / sprite.obj.maxLife;
+                    // Fade in and out smoothly using a sine curve, max opacity is low
+                    let alpha = Math.sin(lifeRatio * Math.PI) * 0.25; 
+                    
+                    // Add vertical distortion to make it look unstable
+                    let distortion = Math.sin(progress * 20 + Date.now()*0.02) * 8;
+                    let yStart = drawStartY + distortion;
+                    let yEnd = drawEndY + distortion;
+
+                    ctx.fillStyle = `rgba(10, 5, 10, ${alpha})`;
+                    ctx.fillRect(stripe, yStart, 1, yEnd - yStart);
                 }
                 else if (sprite.type === 'exit') {
                     // Door Visuals
@@ -2500,6 +2692,26 @@ function drawMinimap() {
     miniCtx.fill();
     miniCtx.restore();
     
+    // Sanity Static Overlay
+    let insanity = (SANITY_MAX - sanity) / SANITY_MAX;
+    if (insanity > 0.05) {
+        // Use a curve to make it ramp up, reaching full opacity before sanity is completely gone
+        let alpha = Math.min(1.0, insanity * 1.5);
+        
+        // Generate new random noise every frame
+        const noiseData = minimapNoiseCtx.createImageData(miniCanvas.width, miniCanvas.height);
+        for (let i = 0; i < noiseData.data.length; i += 4) {
+            const v = Math.random() > 0.5 ? 255 : 0;
+            noiseData.data[i] = noiseData.data[i+1] = noiseData.data[i+2] = v;
+            noiseData.data[i+3] = 255; // Full opacity for the noise itself
+        }
+        minimapNoiseCtx.putImageData(noiseData, 0, 0);
+        
+        miniCtx.globalAlpha = alpha;
+        miniCtx.drawImage(minimapNoiseCanvas, 0, 0);
+        miniCtx.globalAlpha = 1.0; // Reset alpha for subsequent drawing
+    }
+
     // Vignette on minimap
     let grad = miniCtx.createRadialGradient(centerX, centerY, 50, centerX, centerY, 75);
     grad.addColorStop(0, 'rgba(0,0,0,0)');
