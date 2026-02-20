@@ -747,6 +747,16 @@ function playSound(type) {
 // ---------------- GAME LOGIC ----------------
 
 function hasLineOfSight(x1, y1, x2, y2) {
+    // First, check if the point being lit is inside a wall. If so, it can't see any light.
+    let startMapX = Math.floor(x1);
+    let startMapY = Math.floor(y1);
+    if (startMapX < 0 || startMapX >= worldMap.length || !worldMap[startMapX] || startMapY < 0 || startMapY >= worldMap[startMapX].length) {
+        return false; // Start point is out of bounds.
+    }
+    if (worldMap[startMapX][startMapY] !== 0) {
+        return false; // Start point is inside a wall.
+    }
+
     let dx = x2 - x1;
     let dy = y2 - y1;
     let dist = Math.sqrt(dx*dx + dy*dy);
@@ -2707,6 +2717,16 @@ function drawMinimap() {
         miniCtx.globalAlpha = 1.0; // Reset alpha for subsequent drawing
     }
 
+    // Vignette on minimap
+    let grad = miniCtx.createRadialGradient(centerX, centerY, 50, centerX, centerY, 75);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(1, 'rgba(0,0,0,1)');
+    miniCtx.fillStyle = grad;
+    miniCtx.fillRect(0,0,150,150);
+}
+</script>
+</body>
+</html>
     // Vignette on minimap
     let grad = miniCtx.createRadialGradient(centerX, centerY, 50, centerX, centerY, 75);
     grad.addColorStop(0, 'rgba(0,0,0,0)');
