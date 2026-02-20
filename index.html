@@ -1239,21 +1239,17 @@ function generateLevel() {
             // Avoid overlapping existing props (like office desks)
             if (!props.some(p => (p.x - px)**2 + (p.y - py)**2 < 0.6)) {
                 props.push({ x: px, y: py, type: type });
+                if (type === 'lamp') {
+                    lights.push({
+                        x: px, y: py, z: 0.8, // height of light source
+                        radius: 5.0,
+                        intensity: 0.8,
+                        color: [255, 200, 150] // Warm light
+                    });
+                }
             }
         }
     }
-
-    // Create static lights from lamp props
-    props.forEach(p => {
-        if (p.type === 'lamp') {
-            lights.push({
-                x: p.x, y: p.y, z: 0.8, // height of light source
-                radius: 5.0,
-                intensity: 0.8,
-                color: [255, 200, 150] // Warm light
-            });
-        }
-    });
 
     // Batteries
     let batCount = Math.max(2, Math.floor(mapWidth * mapHeight * 0.03));
