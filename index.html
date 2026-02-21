@@ -261,31 +261,36 @@ const LEVEL_STYLES = [
         name: "Level 0: The Lobby",
         wall: [210, 190, 120], wallDark: [160, 140, 90],
         ceil: [112, 107, 94], floor: [68, 68, 51], 
-        hum: 60
+        hum: 60,
+        ambience: 'Sounds/level_0.mp3'
     },
     { // Level 1: Habitable Zone (Industrial Grey)
         name: "Level 1: Habitable Zone",
         wall: [130, 130, 135], wallDark: [90, 90, 95],
         ceil: [69, 69, 69], floor: [32, 32, 32], 
-        hum: 40 
+        hum: 40,
+        ambience: 'Sounds/level_1.mp3'
     },
     { // Level 2: Pipe Dreams (Rusty/Dark)
         name: "Level 2: Pipe Dreams",
         wall: [100, 80, 60], wallDark: [70, 50, 30],
         ceil: [61, 47, 27], floor: [26, 26, 0], 
-        hum: 100 
+        hum: 100,
+        ambience: 'Sounds/level_2.mp3'
     },
     { // Level 3: Electrical Station
         name: "Level 3: Electrical Station",
         wall: [139, 69, 19], wallDark: [100, 40, 10], 
         ceil: [37, 37, 37], floor: [42, 42, 42], 
-        hum: 150 
+        hum: 150,
+        ambience: 'Sounds/level_3.mp3'
     },
     { // Level 4: Abandoned Office
         name: "Level 4: Abandoned Office",
         wall: [200, 200, 210], wallDark: [150, 150, 160], 
         ceil: [209, 209, 199], floor: [85, 85, 85], 
-        hum: 45 
+        hum: 45,
+        ambience: 'Sounds/level_4.mp3'
     }
 ];
 
@@ -298,7 +303,13 @@ let mapWidth = 10;
 let mapHeight = 10;
 let worldMap = [];
 let visitedMap = []; 
+// Audio Globals
 let audioCtx = null;
+let masterGain = null;
+let masterVolume = 0.5; // ADJUST VOLUME HERE (0.0 to 1.0)
+let currentAmbienceNode = null;
+let menuMusicNode = null;
+
 let gameOver = false;
 let masterFilter = null;
 let heartbeat = { osc: null, gain: null };
@@ -490,28 +501,19 @@ function initAudio() {
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     audioCtx = new AudioContext();
 
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = masterVolume;
+    masterGain.connect(audioCtx.destination);
+
     masterFilter = audioCtx.createBiquadFilter();
     masterFilter.type = 'lowpass';
     masterFilter.frequency.value = 22000;
-    masterFilter.connect(audioCtx.destination);
+    masterFilter.connect(masterGain);
 
-    ambientOsc = audioCtx.createOscillator();
-    ambientGain = audioCtx.createGain();
-    ambientOsc.type = 'sawtooth';
-    ambientOsc.frequency.setValueAtTime(LEVEL_STYLES[currentLevel % LEVEL_STYLES.length].hum, audioCtx.currentTime); 
-    ambientGain.gain.setValueAtTime(0.03, audioCtx.currentTime);
-    
-    let lfo = audioCtx.createOscillator();
-    lfo.frequency.value = 0.2; 
-    let lfoGain = audioCtx.createGain();
-    lfoGain.gain.value = 10;
-    lfo.connect(lfoGain);
-    lfoGain.connect(ambientOsc.frequency);
-    lfo.start();
-
-    ambientOsc.connect(ambientGain);
-    ambientGain.connect(masterFilter);
-    ambientOsc.start();
+    // Menu Music Setup
+    menuMusicNode = new Audio('Sounds/menu.mp3');
+    menuMusicNode.loop = true;
+    menuMusicNode.volume = masterVolume;
 
     heartbeat.osc = audioCtx.createOscillator();
     heartbeat.gain = audioCtx.createGain();
@@ -557,12 +559,25 @@ function initEntitySound(ent) {
     ent.sound.osc.start();
 }
 
+function playAmbience(filename) {
+    if (!audioCtx) return;
+    if (currentAmbienceNode) {
+        currentAmbienceNode.pause();
+        currentAmbienceNode = null;
+    }
+    const audio = new Audio(filename);
+    audio.loop = true;
+    audio.volume = masterVolume;
+    audio.play().catch(e => console.log("Autoplay blocked", e));
+    currentAmbienceNode = audio;
+}
+
 function playSound(type) {
     if (!audioCtx) return;
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
     osc.connect(gain);
-    gain.connect(audioCtx.destination);
+    gain.connect(masterGain);
 
     const t = audioCtx.currentTime;
 
@@ -582,28 +597,9 @@ function playSound(type) {
         osc.start(); osc.stop(t + 0.05);
     }
     else if (type === 'jumpscare') {
-        osc.type = 'sawtooth';
-        osc.frequency.setValueAtTime(100, t);
-        osc.frequency.linearRampToValueAtTime(800, t + 0.1); 
-        
-        const osc2 = audioCtx.createOscillator();
-        const gain2 = audioCtx.createGain();
-        osc2.type = 'square';
-        osc2.frequency.setValueAtTime(150, t);
-        osc2.frequency.linearRampToValueAtTime(750, t + 0.2);
-        osc2.connect(gain2);
-        gain2.connect(audioCtx.destination);
-        
-        gain.gain.setValueAtTime(0.0, t);
-        gain.gain.linearRampToValueAtTime(0.8, t + 0.05); 
-        gain.gain.linearRampToValueAtTime(0, t + 1.0);
-        
-        gain2.gain.setValueAtTime(0.0, t);
-        gain2.gain.linearRampToValueAtTime(0.5, t + 0.05);
-        gain2.gain.linearRampToValueAtTime(0, t + 1.0);
-
-        osc.start(); osc.stop(t + 1.0);
-        osc2.start(); osc2.stop(t + 1.0);
+        const audio = new Audio('Sounds/smiler_jumpscare.mp3');
+        audio.volume = masterVolume;
+        audio.play();
     }
     else if (type === 'door') {
         osc.type = 'sawtooth';
@@ -675,7 +671,7 @@ function playSound(type) {
         gain.gain.setValueAtTime(0.15, t);
         gain.gain.exponentialRampToValueAtTime(0.01, t + 0.5);
 
-        src.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+        src.connect(filter); filter.connect(gain); gain.connect(masterGain);
         src.start(); src.stop(t + 0.5);
         return;
     }
@@ -702,7 +698,7 @@ function playSound(type) {
         filter.frequency.exponentialRampToValueAtTime(50, t + 0.1);
         gain.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
         
-        src.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+        src.connect(filter); filter.connect(gain); gain.connect(masterGain);
         src.start(); src.stop(t + 0.15);
         return;
     }
@@ -871,6 +867,11 @@ async function startGame(isNewGame) {
     
     document.getElementById('overlay').classList.add('hidden');
     initAudio();
+    
+    if (menuMusicNode) {
+        menuMusicNode.pause();
+        menuMusicNode.currentTime = 0;
+    }
     
     if (isNewGame) {
         mapWidth = 10;
@@ -1227,9 +1228,9 @@ function generateLevel() {
 
     updateUI();
     
-    if (ambientOsc && audioCtx) {
+    if (audioCtx) {
         let style = LEVEL_STYLES[currentLevel % LEVEL_STYLES.length];
-        ambientOsc.frequency.setTargetAtTime(style.hum, audioCtx.currentTime, 1.0);
+        playAmbience(style.ambience);
     }
 }
 
@@ -1351,6 +1352,11 @@ function triggerGameOver() {
     
     silenceEntities();
     document.getElementById('note-modal').style.display = 'none';
+    if (currentAmbienceNode) currentAmbienceNode.pause();
+    if (menuMusicNode) {
+        menuMusicNode.currentTime = 0;
+        menuMusicNode.play();
+    }
     
     overlay.onclick = () => {
         currentLevel = checkpoint.level;
