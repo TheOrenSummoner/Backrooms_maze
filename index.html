@@ -8,6 +8,7 @@
         
         /* UI Container */
         #ui { position: absolute; top: 10px; left: 10px; z-index: 10; pointer-events: none; width: 95%; display: flex; justify-content: space-between; align-items: flex-start; }
+        #ui { position: absolute; top: 60px; left: 50px; z-index: 10; pointer-events: none; width: calc(100% - 100px); display: flex; justify-content: space-between; align-items: flex-start; }
         
         /* Left UI */
         .ui-left { display: flex; flex-direction: column; gap: 5px; }
@@ -61,7 +62,7 @@
         /* Inventory */
         #inventory-modal {
             display: none;
-            position: absolute;
+            position: fixed;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
@@ -94,6 +95,46 @@
             display: none;
             box-shadow: 0 0 4px #000;
         }
+
+        /* Camera Overlay */
+        #camera-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 5;
+            font-family: 'Courier New', monospace;
+        }
+        .cam-corner {
+            position: absolute; width: 30px; height: 30px;
+            border-color: rgba(255, 255, 255, 0.6); border-style: solid; border-width: 0;
+        }
+        .tl { top: 20px; left: 20px; border-top-width: 3px; border-left-width: 3px; }
+        .tr { top: 20px; right: 20px; border-top-width: 3px; border-right-width: 3px; }
+        .bl { bottom: 20px; left: 20px; border-bottom-width: 3px; border-left-width: 3px; }
+        .br { bottom: 20px; right: 20px; border-bottom-width: 3px; border-right-width: 3px; }
+        
+        .rec-indicator {
+            position: absolute; top: 30px; right: 40px;
+            display: flex; align-items: center; gap: 10px;
+            color: #f00; font-size: 24px; font-weight: bold;
+            text-shadow: 0 0 5px #f00;
+        }
+        .rec-dot {
+            width: 20px; height: 20px; background: #f00; border-radius: 50%;
+            box-shadow: 0 0 5px #f00;
+            animation: blinkRec 1s infinite;
+        }
+        @keyframes blinkRec { 0% { opacity: 1; } 50% { opacity: 0; } 100% { opacity: 1; } }
+        .cam-datetime {
+            position: absolute; bottom: 30px; left: 40px;
+            color: #ccc; font-size: 20px; font-weight: bold;
+            text-shadow: 1px 1px 0 #000;
+        }
+        .cam-center {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 20px; height: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.4);
+        }
+        .cam-center::before { content:''; position:absolute; top:50%; left:-10px; width:40px; height:1px; background:rgba(255,255,255,0.4); }
+        .cam-center::after { content:''; position:absolute; left:50%; top:-10px; height:40px; width:1px; background:rgba(255,255,255,0.4); }
     </style>
 </head>
 <body>
@@ -110,7 +151,8 @@
             <div id="battery-icon" class="hud-text">🔦</div>
             <div id="battery-bar"><div id="battery-fill"></div></div>
         </div>
-        <div class="hud-text" style="margin-top:5px; font-size:10px; color:#666;">[F] Flashlight</div>
+        <div class="hud-text" style="margin-top:5px; font-size:7px; color:#666;">[F] Flashlight/Night Vision</div>
+        <div class="hud-text" style="margin-top:1px; font-size:7px; color:#666;">[Tab] Backpack</div>
     </div>
 
     <div id="minimap-container">
@@ -126,6 +168,19 @@
         <div id="note-text"></div>
         <div id="note-hint">Press Space to Close</div>
     </div>
+</div>
+
+<div id="camera-overlay">
+    <div class="cam-corner tl"></div>
+    <div class="cam-corner tr"></div>
+    <div class="cam-corner bl"></div>
+    <div class="cam-corner br"></div>
+    <div class="rec-indicator">
+        <div class="rec-dot"></div>
+        <span>REC</span>
+    </div>
+    <div class="cam-datetime" id="cam-datetime"></div>
+    <div class="cam-center"></div>
 </div>
 
 <div id="jumpscare-overlay">
@@ -149,8 +204,8 @@
  */
 const SCREEN_WIDTH = 640;
 const SCREEN_HEIGHT = 360; 
-const MOVE_SPEED = 3.0; 
-const SPRINT_SPEED = 6.0;
+const MOVE_SPEED = 1.0; 
+const SPRINT_SPEED = 3.0;
 const MOUSE_SENSITIVITY = 0.003;
 
 const STAMINA_DRAIN = 10.0; 
@@ -337,7 +392,7 @@ let dirX = -1, dirY = 0;
 let planeX = 0, planeY = 0.66; 
 let stamina = STAMINA_MAX;
 let battery = BATTERY_MAX;
-let flashlightOn = true;
+let lightMode = 0; // 0: Off, 1: Flashlight, 2: Night Vision
 let flashLightFlicker = 1.0;
 let headBobPhase = 0;
 let headBobOffset = 0;
@@ -451,7 +506,7 @@ function handleKey(code, state) {
 
     if (state && code === 'KeyF') {
         if (battery > 0) {
-            flashlightOn = !flashlightOn;
+            lightMode = (lightMode + 1) % 3;
             playSound('click');
         }
     }
@@ -874,11 +929,11 @@ async function startGame(isNewGame) {
     }
     
     if (isNewGame) {
-        mapWidth = 10;
-        mapHeight = 10;
+        mapWidth = 30;
+        mapHeight = 30;
         currentLevel = 0;
         inventory = new Array(8).fill(null);
-        checkpoint = { level: 0, mapWidth: 10, mapHeight: 10, inventory: [...inventory] };
+        checkpoint = { level: 0, mapWidth: 30, mapHeight: 30, inventory: [...inventory] };
         noteIndex = 0;
         lastStableDir = { x: -1, y: 0 };
         turnEventCooldown = 0;
@@ -890,6 +945,62 @@ async function startGame(isNewGame) {
         gameOver = false;
         lastTime = performance.now();
         requestAnimationFrame(gameLoop);
+    }
+}
+
+function ensureConnectivity() {
+    const width = worldMap.length;
+    const height = worldMap[0].length;
+    let floorTiles = [];
+    for(let x=0; x<width; x++) {
+        for(let y=0; y<height; y++) {
+            if (worldMap[x][y] === 0 || worldMap[x][y] === 2) {
+                floorTiles.push({x, y});
+            }
+        }
+    }
+    if (floorTiles.length === 0) return;
+
+    let visited = new Set();
+    const getReachable = () => {
+        visited.clear();
+        let queue = [floorTiles[0]];
+        visited.add(floorTiles[0].x + ',' + floorTiles[0].y);
+        let head = 0;
+        while(head < queue.length) {
+            let curr = queue[head++];
+            const dirs = [[0,1], [0,-1], [1,0], [-1,0]];
+            for(let d of dirs) {
+                let nx = curr.x + d[0];
+                let ny = curr.y + d[1];
+                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                    if ((worldMap[nx][ny] === 0 || worldMap[nx][ny] === 2) && !visited.has(nx + ',' + ny)) {
+                        visited.add(nx + ',' + ny);
+                        queue.push({x: nx, y: ny});
+                    }
+                }
+            }
+        }
+    };
+
+    getReachable();
+
+    let unvisited = floorTiles.filter(t => !visited.has(t.x + ',' + t.y));
+    let attempts = 0;
+    
+    while (unvisited.length > 0 && attempts < 50) {
+        attempts++;
+        let start = unvisited[0];
+        let target = floorTiles[0]; 
+        
+        let cx = start.x, cy = start.y;
+        let tx = target.x, ty = target.y;
+        
+        while (cx !== tx) { worldMap[cx][cy] = 0; if(cy+1 < height) worldMap[cx][cy+1] = 0; cx += (cx < tx) ? 1 : -1; }
+        while (cy !== ty) { worldMap[cx][cy] = 0; if(cx+1 < width) worldMap[cx+1][cy] = 0; cy += (cy < ty) ? 1 : -1; }
+        
+        getReachable();
+        unvisited = floorTiles.filter(t => !visited.has(t.x + ',' + t.y));
     }
 }
 
@@ -970,6 +1081,141 @@ function generateLevel() {
                     pipeEmitters.push(emitter);
                     pipeMap[x + ',' + y] = emitter;
                 }
+            }
+        }
+    } else if (currentLevel === 1 || currentLevel === 3) {
+        // Level 1 & 3: Massive Room
+        // Clear the center to make a large room
+        for (let x = 1; x < physicalWidth - 1; x++) {
+            for (let y = 1; y < physicalHeight - 1; y++) {
+                worldMap[x][y] = 0;
+            }
+        }
+
+        // Add Pillars (random 1x1 blocks)
+        let pillarCount = Math.floor(physicalWidth * physicalHeight * 0.04);
+        for(let i=0; i<pillarCount; i++) {
+            let px = Math.floor(Math.random() * (physicalWidth - 2)) + 1;
+            let py = Math.floor(Math.random() * (physicalHeight - 2)) + 1;
+            worldMap[px][py] = 1;
+        }
+
+        // Add random wall segments
+        let wallCount = Math.floor((physicalWidth + physicalHeight) * 0.8);
+        for(let i=0; i<wallCount; i++) {
+            let wx = Math.floor(Math.random() * (physicalWidth - 5)) + 2;
+            let wy = Math.floor(Math.random() * (physicalHeight - 5)) + 2;
+            let horizontal = Math.random() > 0.5;
+            let len = Math.floor(Math.random() * 6) + 2;
+            
+            for(let l=0; l<len; l++) {
+                let tx = wx + (horizontal ? l : 0);
+                let ty = wy + (horizontal ? 0 : l);
+                if (tx < physicalWidth - 1 && ty < physicalHeight - 1) {
+                    worldMap[tx][ty] = 1;
+                }
+            }
+        }
+    } else if (currentLevel === 0) {
+        // Level 0: Multiple Massive Rooms
+        let numRooms = 5;
+        let rooms = [];
+        
+        // Create Rooms
+        for(let i=0; i<numRooms; i++) {
+            let rw = Math.floor(Math.random() * (physicalWidth * 0.3)) + 8;
+            let rh = Math.floor(Math.random() * (physicalHeight * 0.3)) + 8;
+            let rx = Math.floor(Math.random() * (physicalWidth - rw - 4)) + 2;
+            let ry = Math.floor(Math.random() * (physicalHeight - rh - 4)) + 2;
+            
+            rooms.push({cx: Math.floor(rx + rw/2), cy: Math.floor(ry + rh/2)});
+            rooms.push({
+                cx: Math.floor(rx + rw/2), cy: Math.floor(ry + rh/2),
+                x: rx, y: ry, w: rw, h: rh,
+                type: Math.random() // <0.25: Pillars, else: Standard
+            });
+
+            for(let x=rx; x<rx+rw; x++) {
+                for(let y=ry; y<ry+rh; y++) {
+                    if(x < physicalWidth-1 && y < physicalHeight-1) worldMap[x][y] = 0;
+                }
+            }
+        }
+
+        // Add Random Walls/Pillars inside rooms
+        let wallCount = Math.floor((physicalWidth + physicalHeight) * 8.0);
+        for(let i=0; i<wallCount; i++) {
+            let wx = Math.floor(Math.random() * (physicalWidth - 5)) + 2;
+            let wy = Math.floor(Math.random() * (physicalHeight - 5)) + 2;
+            if (worldMap[wx][wy] === 0) {
+                if (Math.random() < 0.3) {
+                    worldMap[wx][wy] = 1;
+                } else {
+                    let horizontal = Math.random() > 0.5;
+                    let len = Math.floor(Math.random() * 5) + 2;
+                    for(let l=0; l<len; l++) {
+                        let tx = wx + (horizontal ? l : 0);
+                        let ty = wy + (horizontal ? 0 : l);
+                        if (tx < physicalWidth - 1 && ty < physicalHeight - 1 && worldMap[tx][ty] === 0) {
+                            worldMap[tx][ty] = 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Populate Rooms
+        rooms.forEach(room => {
+            if (room.type < 0.25) {
+                // Pillar Room
+                for(let x = room.x + 2; x < room.x + room.w - 2; x += 2) {
+                    for(let y = room.y + 2; y < room.y + room.h - 2; y += 2) {
+                        if (x < physicalWidth-1 && y < physicalHeight-1) worldMap[x][y] = 1;
+                    }
+                }
+            } else {
+                // Standard Random Walls
+                let wallCount = Math.floor((room.w + room.h) * 1.5);
+                for(let i=0; i<wallCount; i++) {
+                    let wx = Math.floor(Math.random() * (room.w - 4)) + room.x + 2;
+                    let wy = Math.floor(Math.random() * (room.h - 4)) + room.y + 2;
+                    if (worldMap[wx][wy] === 0) {
+                        if (Math.random() < 0.3) {
+                            worldMap[wx][wy] = 1;
+                        } else {
+                            let horizontal = Math.random() > 0.5;
+                            let len = Math.floor(Math.random() * 5) + 2;
+                            for(let l=0; l<len; l++) {
+                                let tx = wx + (horizontal ? l : 0);
+                                let ty = wy + (horizontal ? 0 : l);
+                                if (tx < physicalWidth - 1 && ty < physicalHeight - 1 && worldMap[tx][ty] === 0) {
+                                    worldMap[tx][ty] = 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Connect Rooms (Moved after populate to ensure paths cut through obstacles)
+        for(let i=0; i<rooms.length-1; i++) {
+            let r1 = rooms[i];
+            let r2 = rooms[i+1];
+            let cx = r1.cx;
+            let cy = r1.cy;
+            let tx = r2.cx;
+            let ty = r2.cy;
+            
+            while(cx !== tx) {
+                worldMap[cx][cy] = 0; worldMap[cx][cy+1] = 0;
+                worldMap[cx+1][cy] = 0; worldMap[cx+1][cy+1] = 0;
+                cx += (cx < tx) ? 1 : -1;
+            }
+            while(cy !== ty) {
+                worldMap[cx][cy] = 0; worldMap[cx+1][cy] = 0;
+                worldMap[cx][cy+1] = 0; worldMap[cx+1][cy+1] = 0;
+                cy += (cy < ty) ? 1 : -1;
             }
         }
     } else {
@@ -1073,6 +1319,8 @@ function generateLevel() {
         }
     }
 
+    ensureConnectivity();
+
     let emptySpots = [];
     for (let x = 1; x < physicalWidth - 1; x++) {
         for (let y = 1; y < physicalHeight - 1; y++) {
@@ -1102,6 +1350,7 @@ function generateLevel() {
                 x: eSpawn.x + 0.5, 
                 y: eSpawn.y + 0.5, 
                 speed: 1.0 + (currentLevel * 0.1), 
+                speed: (currentLevel === 0 ? 0.85 : 1.0 + (currentLevel * 0.1)), 
                 sound: null,
                 retreatTimer: 0,
                 aggro: 0,
@@ -1142,7 +1391,7 @@ function generateLevel() {
     stamina = STAMINA_MAX;
     battery = BATTERY_MAX;
     sanity = SANITY_MAX;
-    flashlightOn = false;
+    lightMode = 0;
     exitOpen = false;
 
     orbs = [];
@@ -1158,6 +1407,7 @@ function generateLevel() {
     }
 
     let propCount = Math.floor(mapWidth * mapHeight * 0.08); 
+    if (currentLevel === 1) propCount = Math.floor(propCount * 0.2);
     const propTypes = ['chair', 'table', 'plant', 'lamp'];
     for(let i=0; i<propCount; i++) {
         if(emptySpots.length > 0) {
@@ -1197,6 +1447,7 @@ function generateLevel() {
     }
 
     let batCount = Math.max(2, Math.floor(mapWidth * mapHeight * 0.03));
+    if (currentLevel === 0) batCount = Math.floor(batCount * 0.3);
     for(let i=0; i<batCount; i++) {
         if(emptySpots.length > 0) {
             let s = emptySpots.splice(Math.floor(Math.random() * emptySpots.length), 1)[0];
@@ -1207,6 +1458,7 @@ function generateLevel() {
     }
 
     let energyBarCount = Math.max(3, Math.floor(mapWidth * mapHeight * 0.04));
+    if (currentLevel === 0) energyBarCount = Math.floor(energyBarCount * 0.3);
     for(let i=0; i<energyBarCount; i++) {
         if(emptySpots.length > 0) {
             let s = emptySpots.splice(Math.floor(Math.random() * emptySpots.length), 1)[0];
@@ -1217,6 +1469,7 @@ function generateLevel() {
     }
 
     let almondWaterCount = Math.max(2, Math.floor(mapWidth * mapHeight * 0.025));
+    if (currentLevel === 0) almondWaterCount = Math.floor(almondWaterCount * 0.3);
     for(let i=0; i<almondWaterCount; i++) {
         if(emptySpots.length > 0) {
             let s = emptySpots.splice(Math.floor(Math.random() * emptySpots.length), 1)[0];
@@ -1375,8 +1628,8 @@ function jumpToLevel(levelNum) {
 
     currentLevel = levelNum;
     noteIndex = 0;
-    mapWidth = 10 + (currentLevel * 5);
-    mapHeight = 10 + (currentLevel * 5);
+    mapWidth = 30 + (currentLevel * 5);
+    mapHeight = 30 + (currentLevel * 5);
 
     checkpoint.level = currentLevel;
     checkpoint.mapWidth = mapWidth;
@@ -1533,11 +1786,11 @@ function update(dt) {
         speedRatio = isSprinting ? 1.0 : 0.5;
     }
 
-    if (flashlightOn) {
-        battery -= BATTERY_DRAIN * dt;
+    if (lightMode !== 0) {
+        battery -= (lightMode === 1 ? BATTERY_DRAIN : BATTERY_DRAIN * 1.5) * dt;
         if (battery <= 0) {
             battery = 0;
-            flashlightOn = false;
+            lightMode = 0;
         }
         
         let baseFlicker = 1.0;
@@ -1550,7 +1803,7 @@ function update(dt) {
             
             baseFlicker = 1.0 - (noise * deviation);
 
-            if (audioCtx && flashlightHum.gain) {
+            if (audioCtx && flashlightHum.gain && lightMode === 1) {
                 let vol = 0.01 + (jitterIntensity * 0.04 * noise);
                 flashlightHum.gain.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.1);
                 let pitch = 50 + (jitterIntensity * 10 * noise) + (Math.random() * 5);
@@ -1560,7 +1813,7 @@ function update(dt) {
             if (audioCtx && flashlightHum.gain) flashlightHum.gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
         }
 
-        if (battery < 35) {
+        if (lightMode === 1 && battery < 35) {
             let chance = (35 - battery) / 35;
             if (Math.random() < chance * 0.05) {
                 flashLightFlicker = 0;
@@ -1568,7 +1821,7 @@ function update(dt) {
                 flashLightFlicker = (Math.random() > 0.85 ? 0.25 : 1.0) * baseFlicker;
             }
         } else {
-            if (currentLevel < 1) {
+            if (lightMode === 1 && currentLevel < 1) {
                 flashLightFlicker = Math.random() > 0.995 ? 0.2 : 1.0;
             } else {
                 flashLightFlicker = baseFlicker;
@@ -1604,20 +1857,40 @@ function update(dt) {
     if (keys.w) {
         if(worldMap[Math.floor(posX + dirX * speed)][Math.floor(posY)] === 0) posX += dirX * speed;
         if(worldMap[Math.floor(posX)][Math.floor(posY + dirY * speed)] === 0) posY += dirY * speed;
+        let nx = Math.floor(posX + dirX * speed), ny = Math.floor(posY);
+        if(worldMap[nx][ny] === 0 || worldMap[nx][ny] === 2) posX += dirX * speed;
+        nx = Math.floor(posX); ny = Math.floor(posY + dirY * speed);
+        if(worldMap[nx][ny] === 0 || worldMap[nx][ny] === 2) posY += dirY * speed;
     }
     if (keys.s) {
         if(worldMap[Math.floor(posX - dirX * speed)][Math.floor(posY)] === 0) posX -= dirX * speed;
         if(worldMap[Math.floor(posX)][Math.floor(posY - dirY * speed)] === 0) posY -= dirY * speed;
+        let nx = Math.floor(posX - dirX * speed), ny = Math.floor(posY);
+        if(worldMap[nx][ny] === 0 || worldMap[nx][ny] === 2) posX -= dirX * speed;
+        nx = Math.floor(posX); ny = Math.floor(posY - dirY * speed);
+        if(worldMap[nx][ny] === 0 || worldMap[nx][ny] === 2) posY -= dirY * speed;
     }
     let strafeDirX = -dirY;
     let strafeDirY = dirX;
     if (keys.a) {
         if(worldMap[Math.floor(posX - strafeDirX * speed)][Math.floor(posY)] === 0) posX -= strafeDirX * speed;
         if(worldMap[Math.floor(posX)][Math.floor(posY - strafeDirY * speed)] === 0) posY -= strafeDirY * speed;
+        let nx = Math.floor(posX - strafeDirX * speed), ny = Math.floor(posY);
+        if(worldMap[nx][ny] === 0 || worldMap[nx][ny] === 2) posX -= strafeDirX * speed;
+        nx = Math.floor(posX); ny = Math.floor(posY - strafeDirY * speed);
+        if(worldMap[nx][ny] === 0 || worldMap[nx][ny] === 2) posY -= strafeDirY * speed;
     }
     if (keys.d) {
         if(worldMap[Math.floor(posX + strafeDirX * speed)][Math.floor(posY)] === 0) posX += strafeDirX * speed;
         if(worldMap[Math.floor(posX)][Math.floor(posY + strafeDirY * speed)] === 0) posY += strafeDirY * speed;
+        let nx = Math.floor(posX + strafeDirX * speed), ny = Math.floor(posY);
+        if(worldMap[nx][ny] === 0 || worldMap[nx][ny] === 2) posX += strafeDirX * speed;
+        nx = Math.floor(posX); ny = Math.floor(posY + strafeDirY * speed);
+        if(worldMap[nx][ny] === 0 || worldMap[nx][ny] === 2) posY += strafeDirY * speed;
+    }
+
+    if (worldMap[Math.floor(posX)][Math.floor(posY)] === 2) {
+        triggerGameOver();
     }
 
     let px = Math.floor(posX);
@@ -1745,7 +2018,7 @@ function update(dt) {
 
         let currentSpeed = 0;
         
-        if (entity.opacity < 1.0 && (!isVisible || !flashlightOn)) {
+        if (entity.opacity < 1.0 && (!isVisible || lightMode !== 1)) {
             entity.opacity = Math.min(1.0, entity.opacity + dt * 0.5);
         }
 
@@ -1754,7 +2027,7 @@ function update(dt) {
             currentSpeed = -1.5; 
         } else {
             if (isVisible) {
-                if (flashlightOn) {
+                if (lightMode === 1) {
                     entity.lightExposure += dt;
                     
                     let resistance = Math.min(1.0, entity.lightExposure / 6.0);
@@ -1903,6 +2176,7 @@ function update(dt) {
 }
 
 function showNextNote() {
+    if (isInventoryOpen) toggleInventory();
     let notes = LEVEL_NOTES[currentLevel % LEVEL_NOTES.length];
     if (noteIndex < notes.length) {
         isPaused = true;
@@ -1936,6 +2210,11 @@ function updateUI() {
     let sanBar = document.getElementById('sanity-fill');
     sanBar.style.width = sanPct + '%';
     sanBar.style.background = sanity > 30 ? '#90f' : '#f00';
+    
+    // Update Camera Date/Time
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('en-US') + ' ' + now.toLocaleTimeString('en-US', { hour12: false });
+    document.getElementById('cam-datetime').innerText = dateStr;
 
     let bPct = (battery / BATTERY_MAX) * 100;
     let bBar = document.getElementById('battery-fill');
@@ -1959,7 +2238,7 @@ function draw() {
     let horizon = SCREEN_HEIGHT / 2 + headBobOffset;
     let style = LEVEL_STYLES[currentLevel % LEVEL_STYLES.length];
     let insanity = (SANITY_MAX - sanity) / SANITY_MAX;
-    let lightFactorBase = flashlightOn ? 1.0 * flashLightFlicker : 0.5;
+    let lightFactorBase = (lightMode === 1) ? 1.0 * flashLightFlicker : (lightMode === 2 ? 2.0 : 0.5);
 
     const CHUNK_SIZE = 16; 
 
@@ -1967,7 +2246,10 @@ function draw() {
         let p = horizon - y;
         let rowDistance = (0.5 * SCREEN_HEIGHT) / p;
         
-        let distFactor = 1.0 / (1.0 + rowDistance * rowDistance * (0.05 + insanity * 0.15));
+        let fogCoeff = (0.05 + insanity * 0.15);
+        if (lightMode === 2) fogCoeff = 0.005; // Night vision sees further
+
+        let distFactor = 1.0 / (1.0 + rowDistance * rowDistance * fogCoeff);
         let baseR = style.ceil[0] * distFactor * lightFactorBase;
         let baseG = style.ceil[1] * distFactor * lightFactorBase;
         let baseB = style.ceil[2] * distFactor * lightFactorBase;
@@ -1982,6 +2264,12 @@ function draw() {
             let g = baseG + lampLight[1];
             let b = baseB + lampLight[2];
 
+            if (lightMode === 2) {
+                let lum = (r * 0.3 + g * 0.59 + b * 0.11);
+                r = lum * 0.1; g = lum * 0.8; b = lum * 0.1;
+                r = lum * 0.1; g = lum * 0.4; b = lum * 0.15;
+            }
+
             ctx.fillStyle = `rgb(${Math.floor(r)},${Math.floor(g)},${Math.floor(b)})`;
             ctx.fillRect(x, y, CHUNK_SIZE, 1);
         }
@@ -1992,7 +2280,10 @@ function draw() {
         if (p === 0) p = 1; 
         let rowDistance = (0.5 * SCREEN_HEIGHT) / p;
         
-        let distFactor = 1.0 / (1.0 + rowDistance * rowDistance * (0.05 + insanity * 0.15));
+        let fogCoeff = (0.05 + insanity * 0.15);
+        if (lightMode === 2) fogCoeff = 0.005;
+
+        let distFactor = 1.0 / (1.0 + rowDistance * rowDistance * fogCoeff);
         let baseR = style.floor[0] * distFactor * lightFactorBase;
         let baseG = style.floor[1] * distFactor * lightFactorBase;
         let baseB = style.floor[2] * distFactor * lightFactorBase;
@@ -2002,10 +2293,24 @@ function draw() {
             let worldX = posX + rowDistance * (dirX + planeX * cameraX);
             let worldY = posY + rowDistance * (dirY + planeY * cameraX);
 
+            let mx = Math.floor(worldX);
+            let my = Math.floor(worldY);
+            if (mx >= 0 && mx < worldMap.length && my >= 0 && my < worldMap[0].length && worldMap[mx][my] === 2) {
+                ctx.fillStyle = '#050000';
+                ctx.fillRect(x, y, CHUNK_SIZE, 1);
+                continue;
+            }
+
             let lampLight = getLightAtPoint(worldX, worldY, 0.0); 
             let r = baseR + lampLight[0];
             let g = baseG + lampLight[1];
             let b = baseB + lampLight[2];
+
+            if (lightMode === 2) {
+                let lum = (r * 0.3 + g * 0.59 + b * 0.11);
+                r = lum * 0.1; g = lum * 0.8; b = lum * 0.1;
+                r = lum * 0.1; g = lum * 0.4; b = lum * 0.15;
+            }
 
             ctx.fillStyle = `rgb(${Math.floor(r)},${Math.floor(g)},${Math.floor(b)})`;
             ctx.fillRect(x, y, CHUNK_SIZE, 1);
@@ -2037,6 +2342,7 @@ function draw() {
             if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; side = 0; } 
             else { sideDistY += deltaDistY; mapY += stepY; side = 1; }
             if (worldMap[mapX][mapY] > 0) hit = 1;
+            if (worldMap[mapX][mapY] === 1) hit = 1;
         }
 
         if (side === 0) perpWallDist = (mapX - posX + (1 - stepX) / 2) / rayDirX;
@@ -2092,11 +2398,16 @@ function draw() {
             }
         }
 
-        let distFactor = 1.0 / (1.0 + perpWallDist * perpWallDist * (0.05 + insanity * 0.15)); 
+        let fogCoeff = (0.05 + insanity * 0.15);
+        if (lightMode === 2) fogCoeff = 0.005;
+
+        let distFactor = 1.0 / (1.0 + perpWallDist * perpWallDist * fogCoeff); 
         
         let lightFactor = 0.5; 
-        if (flashlightOn) {
+        if (lightMode === 1) {
             lightFactor = 1.0 * flashLightFlicker;
+        } else if (lightMode === 2) {
+            lightFactor = 2.0;
         }
 
         let r = baseR * distFactor * lightFactor;
@@ -2110,6 +2421,12 @@ function draw() {
         g += lampLight[1];
         b += lampLight[2];
 
+        if (lightMode === 2) {
+            let lum = (r * 0.3 + g * 0.59 + b * 0.11);
+            r = lum * 0.1; g = lum * 0.8; b = lum * 0.1;
+            r = lum * 0.1; g = lum * 0.4; b = lum * 0.15;
+        }
+
         ctx.fillStyle = `rgb(${Math.floor(r)}, ${Math.floor(g)}, ${Math.floor(b)})`;
         ctx.fillRect(x, drawStart, 1, drawEnd - drawStart);
 
@@ -2117,6 +2434,13 @@ function draw() {
             let pr = 120 * distFactor * lightFactor;
             let pg = 120 * distFactor * lightFactor;
             let pb = 130 * distFactor * lightFactor;
+            
+            if (lightMode === 2) {
+                let lum = (pr * 0.3 + pg * 0.59 + pb * 0.11);
+                pr = lum * 0.1; pg = lum * 0.8; pb = lum * 0.1;
+                pr = lum * 0.1; pg = lum * 0.4; pb = lum * 0.15;
+            }
+
             ctx.fillStyle = `rgb(${Math.floor(pr)}, ${Math.floor(pg)}, ${Math.floor(pb)})`;
             
             let wallTop = -lineHeight / 2 + horizon + glitchY;
@@ -2134,7 +2458,14 @@ function draw() {
         }
 
         if (currentLevel === 3) {
-            ctx.fillStyle = `rgb(${Math.floor(r*0.6)}, ${Math.floor(g*0.6)}, ${Math.floor(b*0.6)})`;
+            let mr = r*0.6, mg = g*0.6, mb = b*0.6;
+            if (lightMode === 2) {
+                let lum = (mr * 0.3 + mg * 0.59 + mb * 0.11);
+                mr = lum * 0.1; mg = lum * 0.8; mb = lum * 0.1;
+                mr = lum * 0.1; mg = lum * 0.4; mb = lum * 0.15;
+            }
+
+            ctx.fillStyle = `rgb(${Math.floor(mr)}, ${Math.floor(mg)}, ${Math.floor(mb)})`;
             let wallTop = -lineHeight / 2 + horizon + glitchY;
             let rows = 8;
             let rowH = lineHeight / rows;
@@ -2199,6 +2530,21 @@ function draw() {
 
         if (transformY <= 0.1) continue; 
 
+        let isLit = false;
+        if (lightMode === 1 && flashLightFlicker > 0.5) {
+            isLit = true;
+        } else {
+            let lRGB = getLightAtPoint(sprite.x, sprite.y, sprite.obj.z || 0.5);
+            if (lRGB[0] > 40 || lRGB[1] > 40 || lRGB[2] > 40) isLit = true;
+        }
+        
+        let fogFactor = (0.05 + insanity * 0.15);
+        if (isLit || lightMode === 2) fogFactor *= 0.2; 
+        
+        let fogOpacity = 1.0 / (1.0 + transformY * transformY * fogFactor);
+
+        if (fogOpacity < 0.05) continue;
+
         let spriteScreenX = Math.floor((SCREEN_WIDTH / 2) * (1 + transformX / transformY));
         let baseHeight = Math.abs(Math.floor(SCREEN_HEIGHT / transformY));
         let spriteHeight = baseHeight;
@@ -2261,7 +2607,7 @@ function draw() {
         let startX = Math.floor(Math.max(0, drawStartX));
         let endX = Math.floor(Math.min(SCREEN_WIDTH, drawEndX));
 
-        let spriteLight = flashlightOn ? 1.0 * flashLightFlicker : 0.4;
+        let spriteLight = (lightMode === 1) ? 1.0 * flashLightFlicker : 0.4;
 
         for (let stripe = startX; stripe < endX; stripe++) {
             if (transformY < zBuffer[stripe]) {
@@ -2278,9 +2624,22 @@ function draw() {
                         let sH = dHeight * scaleY;
 
                         if (sH > 0 && sH + sY <= imgToDraw.height + 0.1) {
-                            if (sprite.type === 'entity') ctx.globalAlpha = sprite.obj.opacity;
-                            ctx.drawImage(imgToDraw, texX, sY, 1, sH, stripe, drawStartY, 1, dHeight);
-                            if (sprite.type === 'entity') ctx.globalAlpha = 1.0; 
+                            let drawAlpha = fogOpacity;
+                            if (sprite.type === 'entity') drawAlpha *= sprite.obj.opacity;
+                            ctx.globalAlpha = drawAlpha;
+                            
+                            if (lightMode === 2) {
+                                // Manual green tint for sprites in NV
+                                ctx.save();
+                                ctx.filter = 'grayscale(100%) sepia(100%) hue-rotate(90deg) saturate(150%) brightness(0.8)';
+                                ctx.filter = 'grayscale(100%) sepia(100%) hue-rotate(90deg) saturate(50%) brightness(0.6)';
+                                ctx.drawImage(imgToDraw, texX, sY, 1, sH, stripe, drawStartY, 1, dHeight);
+                                ctx.restore();
+                            } else {
+                                ctx.drawImage(imgToDraw, texX, sY, 1, sH, stripe, drawStartY, 1, dHeight);
+                            }
+                            
+                            ctx.globalAlpha = 1.0; 
                         }
                     }
                 }
@@ -2291,6 +2650,7 @@ function draw() {
                         let hover = Math.sin(Date.now() / 400) * (spriteHeight * 0.05);
                         let noteY = drawStartY + (spriteHeight - noteH)/2 + hover;
                         
+                        ctx.globalAlpha = fogOpacity;
                         ctx.fillStyle = '#fdf5e6'; 
                         ctx.fillRect(stripe, noteY, 1, noteH);
                         
@@ -2302,11 +2662,12 @@ function draw() {
                                 ctx.fillRect(stripe, ly, 1, lh);
                             }
                         }
+                        ctx.globalAlpha = 1.0;
                      }
                 }
                 else if (sprite.type === 'shadow') {
                     let lifeRatio = sprite.obj.life / sprite.obj.maxLife;
-                    let alpha = Math.sin(lifeRatio * Math.PI) * 0.25; 
+                    let alpha = Math.sin(lifeRatio * Math.PI) * 0.25 * fogOpacity; 
                     
                     let distortion = Math.sin(progress * 20 + Date.now()*0.02) * 8;
                     let yStart = drawStartY + distortion;
@@ -2318,6 +2679,7 @@ function draw() {
                 else if (sprite.type === 'exit') {
                     let dx = progress - 0.5;
                     if (Math.abs(dx) < 0.3) { 
+                        ctx.globalAlpha = fogOpacity;
                         if (exitOpen) {
                             ctx.fillStyle = `rgba(200, 255, 200, ${0.8 + Math.random()*0.2})`;
                             ctx.fillRect(stripe, drawStartY, 1, drawEndY - drawStartY);
@@ -2325,13 +2687,14 @@ function draw() {
                             ctx.fillStyle = '#311';
                             ctx.fillRect(stripe, drawStartY, 1, drawEndY - drawStartY);
                         }
+                        ctx.globalAlpha = 1.0;
                     }
                 } 
                 else if (sprite.type === 'steam') {
                     let sp = sprite.obj;
                     let screenZ = (horizon + spriteHeight/2) - (sp.z * spriteHeight);
                     let size = spriteWidth * sp.size;
-                    let alpha = (sp.life / sp.maxLife) * 0.3;
+                    let alpha = (sp.life / sp.maxLife) * 0.3 * fogOpacity;
                     ctx.fillStyle = `rgba(200, 200, 200, ${alpha})`;
                     ctx.beginPath();
                     ctx.arc(spriteScreenX, screenZ, size/2, 0, Math.PI*2);
@@ -2341,7 +2704,7 @@ function draw() {
         }
     }
 
-    if (flashlightOn) {
+    if (lightMode === 1) {
         let grad = ctx.createRadialGradient(SCREEN_WIDTH/2, SCREEN_HEIGHT/2, 50, SCREEN_WIDTH/2, SCREEN_HEIGHT/2, SCREEN_HEIGHT * 0.85);
         grad.addColorStop(0, 'rgba(0,0,0,0)');
         grad.addColorStop(1, '#000');
@@ -2356,6 +2719,18 @@ function draw() {
         ctx.fillStyle = `rgba(0,0,0,${(insanity - 0.2) * 0.8})`;
         ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
     }
+
+    // VHS Lines
+    if (insanity > 0) {
+        ctx.fillStyle = `rgba(255, 255, 255, ${insanity * 0.15})`;
+        let lineCount = Math.floor(SCREEN_HEIGHT / 4);
+        for (let i = 0; i < lineCount; i++) {
+             if (Math.random() < insanity * 0.3) {
+                 ctx.fillRect(0, i * 4, SCREEN_WIDTH, 2);
+             }
+        }
+    }
+
     ctx.restore();
 
     let noiseX = Math.floor(Math.random() * 100) - 50;
