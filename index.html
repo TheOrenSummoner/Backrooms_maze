@@ -1,13 +1,15 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
     <title>Backrooms Horror Game</title>
     <style>
         body { margin: 0; padding: 0; background: #000; overflow: hidden; color: #fff; font-family: 'Courier New', monospace; user-select: none; }
         canvas { display: block; width: 100%; height: 100%; cursor: none; }
+        canvas { display: block; width: 100%; height: 100%; }
+        #game, #scare-canvas { cursor: none; }
         
         /* UI Container */
-        #ui { position: absolute; top: 10px; left: 10px; z-index: 10; pointer-events: none; width: 95%; display: flex; justify-content: space-between; align-items: flex-start; }
         #ui { position: absolute; top: 60px; left: 50px; z-index: 10; pointer-events: none; width: calc(100% - 100px); display: flex; justify-content: space-between; align-items: flex-start; }
         
         /* Left UI */
@@ -28,10 +30,41 @@
         #minimap-canvas { width: 100%; height: 100%; display: block; }
 
         /* Overlays */
-        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; display: flex; align-items: center; justify-content: center; z-index: 20; flex-direction: column; cursor: pointer; }
+        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; display: flex; align-items: center; justify-content: center; z-index: 20; flex-direction: column; }
         #jumpscare-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 30; display: none; align-items: center; justify-content: center; overflow: hidden; }
         
-        #msg { font-size: 24px; text-align: center; color: #a00; text-shadow: 0 0 5px #f00; line-height: 1.5; }
+        /* Menu Styles */
+        .menu-screen { 
+            display: flex; flex-direction: column; align-items: center; gap: 15px; 
+            width: 100%; max-width: 100%; text-align: center; 
+            position: relative; justify-content: center;
+        }
+        .menu-btn {
+            background: #111; border: 1px solid #444; color: #ccc; font-family: 'Courier New', monospace;
+            font-size: 20px; padding: 10px 30px; cursor: pointer; width: 250px; transition: all 0.2s;
+            text-transform: uppercase; letter-spacing: 2px;
+            position: relative;
+            z-index: 1;
+        }
+        .menu-btn:hover { background: #300; border-color: #800; color: #fff; }
+        
+        .slider-row { display: flex; justify-content: space-between; width: 100%; align-items: center; margin-bottom: 10px; }
+        .slider-row label { color: #ccc; font-size: 16px; }
+        input[type=range] { width: 150px; accent-color: #800; }
+        input[type=checkbox] { width: 20px; height: 20px; accent-color: #800; }
+
+        #menu-bg-canvas {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 0;
+        }
+
+        h1 { color:#800; font-size:40px; text-transform:uppercase; letter-spacing:5px; margin-bottom: 10px; text-shadow: 0 0 10px #300; 
+            position: relative;
+            z-index: 1; }
+        h2 { color:#ccc; font-size:24px; text-transform:uppercase; letter-spacing:3px; margin-bottom: 20px; border-bottom: 1px solid #444; padding-bottom: 10px; width: 100%; }
+        p { color: #aaa; font-size: 16px; line-height: 1.4; }
+
         .hidden { display: none !important; }
 
         /* Text Styles */
@@ -82,6 +115,60 @@
         .inv-item-slot.empty { cursor: default; }
         .inv-item-slot.empty:hover { background: #111; border-color: #444; }
         .inv-item-slot.hover { background: #333; border-color: #888; } /* Virtual cursor hover */
+
+        #notes-log-modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(20, 20, 20, 0.95);
+            border: 2px solid #666;
+            padding: 20px;
+            z-index: 50;
+            color: #fff;
+            width: 80%;
+            max-width: 700px;
+            height: 80%;
+            box-shadow: 0 0 20px #000;
+            pointer-events: auto;
+            display: flex;
+            flex-direction: column;
+        }
+        #notes-log-content {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding-right: 15px;
+            font-family: 'Courier New', monospace;
+        }
+        #notes-log-content p {
+            font-size: 15px; line-height: 1.5; color: #ddd;
+            margin-bottom: 15px; padding-bottom: 15px;
+            border-bottom: 1px dashed #444;
+        }
+        #notes-log-content p:last-child { border-bottom: none; }
+
+        #notes-log-tabs {
+            display: flex;
+            border-bottom: 1px solid #666;
+            margin-bottom: 15px;
+            flex-shrink: 0;
+        }
+        .note-tab {
+            padding: 8px 15px;
+            cursor: pointer;
+            color: #888;
+            font-size: 14px;
+            border-right: 1px solid #444;
+            background: #2a2a2a;
+        }
+        .note-tab:hover {
+            background: #3f3f3f;
+            color: #ddd;
+        }
+        .note-tab.active {
+            color: #fff;
+            background: #1a1a1a;
+        }
 
         #virtual-cursor {
             position: fixed;
@@ -153,6 +240,7 @@
         </div>
         <div class="hud-text" style="margin-top:5px; font-size:7px; color:#666;">[F] Flashlight/Night Vision</div>
         <div class="hud-text" style="margin-top:1px; font-size:7px; color:#666;">[Tab] Backpack</div>
+        <div class="hud-text" style="margin-top:1px; font-size:7px; color:#666;">[N] Notebook</div>
     </div>
 
     <div id="minimap-container">
@@ -167,6 +255,12 @@
     <div id="note-modal">
         <div id="note-text"></div>
         <div id="note-hint">Press Space to Close</div>
+    </div>
+    <div id="notes-log-modal" style="display: none;">
+        <h2 style="margin:0; color:#ccc; font-size:18px; letter-spacing:2px; text-align: center; margin-bottom: 15px;">NOTES LOG</h2>
+        <div id="notes-log-tabs"></div>
+        <div id="notes-log-content"></div>
+        <div style="font-size:12px; color:#666; margin-top: 10px; text-align: center;">PRESS 'N' TO CLOSE</div>
     </div>
 </div>
 
@@ -188,12 +282,48 @@
 </div>
 
 <div id="overlay">
-    <h1 style="color:#800; font-size:40px; text-transform:uppercase; letter-spacing:5px; margin-bottom: 5px;">Backrooms Maze</h1>
-    <h3 style="color:#666; font-size:16px; margin-top:0; margin-bottom: 20px;">Made with Gemini</h3>
-    <p style="color:#ccc; font-size:18px; margin: 5px 0;">Flash the entity to scare it away</p>
-    <p style="color:#ccc; font-size:18px; margin: 5px 0;">Find all the notes to move on to the next level</p>
-    <p style="color:#666; font-size:12px; margin-top:30px;">MOUSE: Look | WASD: Move | SHIFT: Sprint | F: Flashlight | TAB: Inventory</p>
-    <p id="msg" style="margin-top: 20px;">Click To Start</p>
+    <canvas id="menu-bg-canvas"></canvas>
+    <div id="splash-screen" class="menu-screen" style="cursor: pointer;">
+        <h1>Backrooms Maze</h1>
+        <p style="color:#a00; font-size:24px; animation: blink 1s infinite;">CLICK TO ENTER</p>
+    </div>
+
+    <div id="main-menu" class="menu-screen hidden"> 
+        <h1>Backrooms Maze</h1>
+        <button class="menu-btn" onclick="startGame(true)">Play</button>
+        <button class="menu-btn" onclick="showMenu('settings')">Settings</button>
+        <button class="menu-btn" onclick="showMenu('how-to-play')">How to Play</button>
+        <button class="menu-btn" onclick="showMenu('credits')">Credits</button>
+    </div>
+
+    <div id="settings" class="menu-screen hidden">
+        <h2>Settings</h2>
+        <div class="slider-row"><label>Music & Ambience</label><input type="range" min="0" max="1" step="0.1" value="1" oninput="updateVolume('music', this.value)"></div>
+        <div class="slider-row"><label>Sound Effects</label><input type="range" min="0" max="1" step="0.1" value="1" oninput="updateVolume('sfx', this.value)"></div>
+        <div class="slider-row"><label>Jumpscare</label><input type="range" min="0" max="1" step="0.1" value="1" oninput="updateVolume('jumpscare', this.value)"></div>
+        <div class="slider-row"><label>Visual Sanity Effects</label><input type="checkbox" checked onchange="toggleVisualSanity(this.checked)"></div>
+        <button class="menu-btn" onclick="showMenu('main-menu')">Back</button>
+    </div>
+
+    <div id="how-to-play" class="menu-screen hidden">
+        <h2>How to Play</h2>
+        <p>Explore the maze and find all the <strong>NOTES</strong> to progress.</p>
+        <p>Avoid the <strong>ENTITY</strong>. Use your flashlight to scare it away, but watch your battery.</p>
+        <p style="font-size: 14px; color: #000000; margin-top: 20px;">
+            WASD - Move<br>SHIFT - Sprint<br>MOUSE - Look<br>F - Flashlight / Night Vision<br>TAB - Inventory<br>N - Notebook
+        </p>
+        <button class="menu-btn" onclick="showMenu('main-menu')">Back</button>
+    </div>
+
+    <div id="credits" class="menu-screen hidden">
+        <h2>Credits</h2>
+        <p>Game by: <span style="color:#fff">TheOrenSummoner</span></p>
+        <p>Code by: <span style="color:#fff">Gemini 3 Pro</span></p>
+        <p><span style="color:#fff">Pictures/Music from The Internet</span></p>
+        <button class="menu-btn" onclick="showMenu('main-menu')">Back</button>
+    </div>
+
+    <div id="game-over-screen" class="menu-screen hidden"></div>
 </div>
 
 <canvas id="game"></canvas>
@@ -227,6 +357,7 @@ const imgTable = new Image(); imgTable.src = 'Table.webp';
 const imgChair = new Image(); imgChair.src = 'Chair.webp';
 const imgLamp = new Image(); imgLamp.src = 'Lamp.webp';
 const imgPlant = new Image(); imgPlant.src = 'Plants.webp';
+const imgRadio = new Image(); imgRadio.src = 'radio.webp';
 
 const LEVEL_NOTES = [
     [ // Level 0
@@ -361,7 +492,32 @@ let visitedMap = [];
 // Audio Globals
 let audioCtx = null;
 let masterGain = null;
-let masterVolume = 0.5; // ADJUST VOLUME HERE (0.0 to 1.0)
+
+const DEFAULT_VOLUMES = {
+    master: 0.4,       // Master volume scaler
+    menu: 0.3,         // Menu music
+    ambience: 1.0,     // Background hum/ambience
+    heartbeat: 0.4,    // Heartbeat max volume
+    flashlight: 0.02,  // Flashlight hum
+    entity: 0.2,       // Entity idle sound
+    orb: 0.1,          // Note pickup
+    click: 0.05,       // UI Click
+    jumpscare: 2.5,    // Jumpscare noise
+    door: 0.1,         // Exit open sound
+    battery: 0.05,     // Battery pickup
+    energy: 0.05,      // Energy bar pickup
+    pickup: 0.05,      // Generic pickup
+    water: 0.1,        // Almond water
+    step: 0.3,         // Footsteps
+    steam: 0.15,       // Steam vents
+    distant_step: 0.4, // Distant scary sounds
+    radioMusic: 0.3,   // Radio music
+    radioStatic: 0.03,  // Radio static
+    thunder: 1.5         // Thunder on level 4
+};
+
+let SOUND_VOLUMES = { ...DEFAULT_VOLUMES };
+
 let currentAmbienceNode = null;
 let menuMusicNode = null;
 
@@ -374,8 +530,11 @@ let exitPos = null;
 let exitOpen = false;
 let isPaused = false;
 let isInventoryOpen = false;
+let isNotesLogOpen = false;
 let virtualCursorPos = { x: window.innerWidth/2, y: window.innerHeight/2 };
 let currentLevel = 0;
+let activeNoteLogLevel = 0;
+let collectedNotes = [];
 let checkpoint = { level: 0, mapWidth: 10, mapHeight: 10, inventory: [] };
 let inventory = new Array(8).fill(null);
 let noteIndex = 0;
@@ -385,11 +544,13 @@ let pipeEmitters = [];
 let pipeMap = {};
 let steamParticles = [];
 let hallucinations = [];
+let lightning = { active: false, timer: 0, intensity: 0, nextStrike: 5.0 };
 
 // Player
 let posX = 0, posY = 0; 
 let dirX = -1, dirY = 0; 
 let planeX = 0, planeY = 0.66; 
+let pitch = 0;
 let stamina = STAMINA_MAX;
 let battery = BATTERY_MAX;
 let lightMode = 0; // 0: Off, 1: Flashlight, 2: Night Vision
@@ -399,7 +560,15 @@ let headBobOffset = 0;
 let minimapNoiseCanvas = null;
 let minimapNoiseCtx = null;
 let noiseCanvas = null;
+let menuBgCanvas, menuBgCtx;
+let menuAnimationId = null;
+let menuFlickerState = {
+    on: true,
+    timer: 2.0
+};
+let menuLastTime = 0;
 let sanity = SANITY_MAX;
+let visualSanityEnabled = true;
 
 // Input
 const keys = { w: false, a: false, s: false, d: false, shift: false };
@@ -429,6 +598,9 @@ window.onload = () => {
     miniCanvas.width = 150;
     miniCanvas.height = 150;
     miniCtx = miniCanvas.getContext('2d');
+
+    menuBgCanvas = document.getElementById('menu-bg-canvas');
+    menuBgCtx = menuBgCanvas.getContext('2d');
 
     minimapNoiseCanvas = document.createElement('canvas');
     minimapNoiseCanvas.width = 150;
@@ -488,10 +660,16 @@ window.onload = () => {
 
 function handleKey(code, state) {
     if (code === 'Space' && state) {
-        if (isPaused) {
+        // Only close the single note modal, not the log or inventory
+        if (isPaused && !isNotesLogOpen && !isInventoryOpen) {
             closeNote();
             return;
         }
+    }
+
+    if (state && code === 'KeyN') {
+        toggleNotesLog();
+        return;
     }
 
     if (code === 'KeyW') keys.w = state;
@@ -543,6 +721,10 @@ function handleMouseLook(e) {
     let oldPlaneX = planeX;
     planeX = planeX * Math.cos(rot) - planeY * Math.sin(rot);
     planeY = oldPlaneX * Math.sin(rot) + planeY * Math.cos(rot);
+
+    pitch -= e.movementY;
+    if (pitch > 200) pitch = 200;
+    if (pitch < -200) pitch = -200;
 }
 
 // ---------------- AUDIO SYSTEM ----------------
@@ -557,7 +739,7 @@ function initAudio() {
     audioCtx = new AudioContext();
 
     masterGain = audioCtx.createGain();
-    masterGain.gain.value = masterVolume;
+    masterGain.gain.value = SOUND_VOLUMES.master;
     masterGain.connect(audioCtx.destination);
 
     masterFilter = audioCtx.createBiquadFilter();
@@ -568,7 +750,7 @@ function initAudio() {
     // Menu Music Setup
     menuMusicNode = new Audio('Sounds/menu.mp3');
     menuMusicNode.loop = true;
-    menuMusicNode.volume = masterVolume;
+    menuMusicNode.volume = SOUND_VOLUMES.menu * SOUND_VOLUMES.master;
 
     heartbeat.osc = audioCtx.createOscillator();
     heartbeat.gain = audioCtx.createGain();
@@ -614,6 +796,83 @@ function initEntitySound(ent) {
     ent.sound.osc.start();
 }
 
+function initRadioSound(prop) {
+    if (!audioCtx) return;
+    
+    if (prop.radioType === 'music') {
+        const tracks = [
+            'Sounds/daisy_bell.mp3',
+            'Sounds/distorted-trumpets.mp3',
+            'Sounds/music_box.mp3',
+            'Sounds/siren_head.mp3',
+            'Sounds/robotvoice.mp3',
+            'Sounds/robotvoicecall.mp3'
+        ];
+        const track = tracks[Math.floor(Math.random() * tracks.length)];
+        // Use HTML Audio for music to avoid CORS issues on local file system
+        const audio = new Audio(track);
+        audio.loop = false;
+        audio.volume = 0;
+        audio.onended = switchActiveRadio;
+        audio.play().catch(e => console.log("Radio play failed", e));
+        prop.sound = {
+            element: audio,
+            type: 'element'
+        };
+    } else {
+        const audio = new Audio('Sounds/static.mp3');
+        audio.loop = true;
+        audio.volume = 0;
+        audio.play().catch(e => console.log("Static play failed", e));
+        prop.sound = {
+            element: audio,
+            type: 'element'
+        };
+    }
+}
+
+function switchActiveRadio() {
+    if (!running || gameOver) return;
+    
+    let currentMusic = props.find(p => p.type === 'radio' && p.radioType === 'music');
+    let allRadios = props.filter(p => p.type === 'radio');
+    if (allRadios.length === 0) return;
+
+    let available = allRadios.filter(p => p !== currentMusic);
+    if (available.length === 0) available = allRadios;
+    
+    let nextRadio = available[Math.floor(Math.random() * available.length)];
+
+    if (currentMusic) {
+        currentMusic.radioType = 'static';
+        if (currentMusic.sound) {
+            if (currentMusic.sound.type === 'element') {
+                currentMusic.sound.element.onended = null;
+                currentMusic.sound.element.pause();
+                currentMusic.sound.element.src = "";
+            } else if (currentMusic.sound.type === 'node') {
+                 currentMusic.sound.gain.disconnect();
+                 try { currentMusic.sound.source.stop(); } catch(e){}
+            }
+            currentMusic.sound = null;
+        }
+    }
+
+    nextRadio.radioType = 'music';
+    if (nextRadio.sound) {
+        if (nextRadio.sound.type === 'node') {
+            nextRadio.sound.gain.disconnect();
+            try { nextRadio.sound.source.stop(); } catch(e){}
+        } else if (nextRadio.sound.type === 'element') {
+            nextRadio.sound.element.onended = null;
+            nextRadio.sound.element.pause();
+            nextRadio.sound.element.src = "";
+        }
+        nextRadio.sound = null;
+    }
+    initRadioSound(nextRadio);
+}
+
 function playAmbience(filename) {
     if (!audioCtx) return;
     if (currentAmbienceNode) {
@@ -622,7 +881,7 @@ function playAmbience(filename) {
     }
     const audio = new Audio(filename);
     audio.loop = true;
-    audio.volume = masterVolume;
+    audio.volume = SOUND_VOLUMES.ambience * SOUND_VOLUMES.master;
     audio.play().catch(e => console.log("Autoplay blocked", e));
     currentAmbienceNode = audio;
 }
@@ -640,20 +899,25 @@ function playSound(type) {
         osc.type = 'sine';
         osc.frequency.setValueAtTime(400, t);
         osc.frequency.exponentialRampToValueAtTime(800, t + 0.1);
-        gain.gain.setValueAtTime(0.1, t);
+        gain.gain.setValueAtTime(SOUND_VOLUMES.orb, t);
         gain.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
         osc.start(); osc.stop(t + 0.15);
     } 
     else if (type === 'click') {
         osc.type = 'square';
         osc.frequency.setValueAtTime(200, t);
-        gain.gain.setValueAtTime(0.05, t);
+        gain.gain.setValueAtTime(SOUND_VOLUMES.click, t);
         gain.gain.exponentialRampToValueAtTime(0.01, t + 0.05);
         osc.start(); osc.stop(t + 0.05);
     }
     else if (type === 'jumpscare') {
         const audio = new Audio('Sounds/smiler_jumpscare.mp3');
-        audio.volume = masterVolume;
+        audio.volume = SOUND_VOLUMES.jumpscare * SOUND_VOLUMES.master;
+        audio.play();
+    }
+    else if (type === 'thunder') {
+        const audio = new Audio('Sounds/thunder.mp3');
+        audio.volume = SOUND_VOLUMES.thunder * SOUND_VOLUMES.master;
         audio.play();
     }
     else if (type === 'door') {
@@ -661,8 +925,8 @@ function playSound(type) {
         osc.frequency.setValueAtTime(60, t);
         osc.frequency.exponentialRampToValueAtTime(30, t + 1.5);
         
-        gain.gain.setValueAtTime(0.1, t);
-        gain.gain.linearRampToValueAtTime(0.2, t + 0.2);
+        gain.gain.setValueAtTime(SOUND_VOLUMES.door, t);
+        gain.gain.linearRampToValueAtTime(SOUND_VOLUMES.door * 2, t + 0.2);
         gain.gain.linearRampToValueAtTime(0, t + 1.5);
         
         osc.start(); osc.stop(t + 1.5);
@@ -671,7 +935,7 @@ function playSound(type) {
         osc.type = 'square';
         osc.frequency.setValueAtTime(400, t);
         osc.frequency.exponentialRampToValueAtTime(600, t + 0.1);
-        gain.gain.setValueAtTime(0.05, t);
+        gain.gain.setValueAtTime(SOUND_VOLUMES.battery, t);
         gain.gain.linearRampToValueAtTime(0, t + 0.1);
         osc.start(); osc.stop(t + 0.1);
     }
@@ -679,7 +943,7 @@ function playSound(type) {
         osc.type = 'triangle';
         osc.frequency.setValueAtTime(300, t);
         osc.frequency.exponentialRampToValueAtTime(500, t + 0.1);
-        gain.gain.setValueAtTime(0.05, t);
+        gain.gain.setValueAtTime(SOUND_VOLUMES.energy, t);
         gain.gain.linearRampToValueAtTime(0, t + 0.1);
         osc.start(); osc.stop(t + 0.1);
     }
@@ -687,7 +951,7 @@ function playSound(type) {
         osc.type = 'sine';
         osc.frequency.setValueAtTime(800, t);
         osc.frequency.exponentialRampToValueAtTime(1200, t + 0.05);
-        gain.gain.setValueAtTime(0.05, t);
+        gain.gain.setValueAtTime(SOUND_VOLUMES.pickup, t);
         gain.gain.linearRampToValueAtTime(0, t + 0.05);
         osc.start(); osc.stop(t + 0.05);
     }
@@ -695,7 +959,7 @@ function playSound(type) {
         osc.type = 'sine';
         osc.frequency.setValueAtTime(600, t);
         osc.frequency.exponentialRampToValueAtTime(1200, t + 0.2);
-        gain.gain.setValueAtTime(0.1, t);
+        gain.gain.setValueAtTime(SOUND_VOLUMES.water, t);
         gain.gain.linearRampToValueAtTime(0, t + 0.2);
         osc.start(); osc.stop(t + 0.2);
     }
@@ -703,7 +967,7 @@ function playSound(type) {
         osc.type = 'triangle';
         osc.frequency.setValueAtTime(100, t);
         osc.frequency.exponentialRampToValueAtTime(20, t + 0.3);
-        gain.gain.setValueAtTime(0.4, t);
+        gain.gain.setValueAtTime(SOUND_VOLUMES.distant_step, t);
         gain.gain.exponentialRampToValueAtTime(0.01, t + 0.4);
         
         const filter = audioCtx.createBiquadFilter();
@@ -723,7 +987,7 @@ function playSound(type) {
         filter.frequency.setValueAtTime(800, t);
         filter.frequency.linearRampToValueAtTime(100, t + 0.5);
 
-        gain.gain.setValueAtTime(0.15, t);
+        gain.gain.setValueAtTime(SOUND_VOLUMES.steam, t);
         gain.gain.exponentialRampToValueAtTime(0.01, t + 0.5);
 
         src.connect(filter); filter.connect(gain); gain.connect(masterGain);
@@ -740,14 +1004,14 @@ function playSound(type) {
         
         if (currentLevel === 0 || currentLevel === 4) { 
             filter.frequency.setValueAtTime(250, t);
-            gain.gain.setValueAtTime(0.15, t);
+            gain.gain.setValueAtTime(SOUND_VOLUMES.step, t);
         } else if (currentLevel === 2) { 
             filter.frequency.setValueAtTime(600, t);
             filter.Q.value = 5; 
-            gain.gain.setValueAtTime(0.1, t);
+            gain.gain.setValueAtTime(SOUND_VOLUMES.step * 0.7, t);
         } else { 
             filter.frequency.setValueAtTime(400, t);
-            gain.gain.setValueAtTime(0.2, t);
+            gain.gain.setValueAtTime(SOUND_VOLUMES.step * 1.3, t);
         }
         
         filter.frequency.exponentialRampToValueAtTime(50, t + 0.1);
@@ -764,6 +1028,24 @@ function silenceEntities() {
         if (e.sound) {
             e.sound.gain.gain.value = 0;
             try { e.sound.osc.stop(); e.sound.osc.disconnect(); } catch(err){}
+        }
+    });
+}
+
+function silenceRadios() {
+    props.forEach(p => {
+        if (p.sound) {
+            if (p.sound.type === 'node') {
+                p.sound.gain.gain.value = 0;
+                try { p.sound.source.stop(); } catch(e){}
+                try { p.sound.source.disconnect(); } catch(e){}
+                try { p.sound.gain.disconnect(); } catch(e){}
+            } else if (p.sound.type === 'element') {
+                p.sound.element.onended = null;
+                p.sound.element.pause();
+                p.sound.element.src = "";
+            }
+            p.sound = null;
         }
     });
 }
@@ -908,14 +1190,206 @@ function renderInventory() {
     });
 }
 
+function toggleNotesLog() {
+    const modal = document.getElementById('notes-log-modal');
+    if (isNotesLogOpen) {
+        modal.style.display = 'none';
+        isNotesLogOpen = false;
+        isPaused = false;
+        if (!isInventoryOpen) {
+            canvas.requestPointerLock();
+        }
+    } else {
+        // Don't open if another modal is already pausing the game (like the single note view)
+        if (gameOver || isPaused || isInventoryOpen) return;
+        isPaused = true;
+        isNotesLogOpen = true;
+        document.exitPointerLock();
+        modal.style.display = 'flex';
+        renderNotesLog();
+    }
+}
+
+function renderNotesLog() {
+    const tabsContainer = document.getElementById('notes-log-tabs');
+    const contentContainer = document.getElementById('notes-log-content');
+    tabsContainer.innerHTML = '';
+    contentContainer.innerHTML = '';
+
+    if (collectedNotes.length === 0) {
+        contentContainer.innerHTML = '<p>No notes collected yet.</p>';
+        return;
+    }
+
+    // Get unique levels that have notes
+    const levelsWithNotes = [...new Set(collectedNotes.map(note => note.level))].sort((a, b) => a - b);
+
+    // If the active tab level is not in the list, reset to the first one
+    if (!levelsWithNotes.includes(activeNoteLogLevel)) {
+        activeNoteLogLevel = levelsWithNotes[0];
+    }
+
+    // Create tabs
+    levelsWithNotes.forEach(levelNum => {
+        const tab = document.createElement('div');
+        tab.className = 'note-tab';
+        tab.innerText = `Level ${levelNum}`;
+        if (levelNum === activeNoteLogLevel) {
+            tab.classList.add('active');
+        }
+        tab.onclick = () => {
+            activeNoteLogLevel = levelNum;
+            renderNotesLog(); // Re-render the whole log
+        };
+        tabsContainer.appendChild(tab);
+    });
+
+    // Filter and display notes for the active tab
+    const notesForLevel = collectedNotes.filter(note => note.level === activeNoteLogLevel);
+
+    notesForLevel.forEach(note => {
+        const p = document.createElement('p');
+        p.innerText = note.text;
+        contentContainer.appendChild(p);
+    });
+}
+
 function setupNewGame() {
-    document.getElementById('overlay').onclick = () => startGame(true);
-    document.querySelector('#overlay h1').innerText = "Backrooms Maze";
-    document.getElementById('msg').innerHTML = `Click To Start`;
+    const splash = document.getElementById('splash-screen');
     document.getElementById('jumpscare-overlay').style.display = 'none';
+
+    splash.onclick = () => {
+        initAudio();
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+        if (menuMusicNode) { 
+            menuMusicNode.currentTime = 0; 
+            menuMusicNode.play().catch(e => console.log(e)); 
+        }
+        showMenu('main-menu');
+    };
+}
+
+function showMenu(menuId) {
+    document.querySelectorAll('.menu-screen').forEach(el => el.classList.add('hidden'));
+    document.getElementById(menuId).classList.remove('hidden');
+
+    if (menuId === 'main-menu') {
+        startMenuAnimation();
+    } else {
+        stopMenuAnimation();
+    }
+}
+
+function updateVolume(category, value) {
+    let val = parseFloat(value);
+    if (category === 'music') {
+        SOUND_VOLUMES.menu = DEFAULT_VOLUMES.menu * val;
+        SOUND_VOLUMES.ambience = DEFAULT_VOLUMES.ambience * val;
+        if (menuMusicNode) menuMusicNode.volume = SOUND_VOLUMES.menu * SOUND_VOLUMES.master;
+        if (currentAmbienceNode) currentAmbienceNode.volume = SOUND_VOLUMES.ambience * SOUND_VOLUMES.master;
+    } else if (category === 'radioMusic') {
+        SOUND_VOLUMES.radioMusic = DEFAULT_VOLUMES.radioMusic * val;
+    } else if (category === 'radioStatic') {
+        SOUND_VOLUMES.radioStatic = DEFAULT_VOLUMES.radioStatic * val;
+    } else if (category === 'jumpscare') {
+        SOUND_VOLUMES.jumpscare = DEFAULT_VOLUMES.jumpscare * val;
+    } else if (category === 'sfx') {
+        const sfxKeys = ['heartbeat', 'flashlight', 'entity', 'orb', 'click', 'door', 'battery', 'energy', 'pickup', 'water', 'step', 'steam', 'distant_step', 'thunder'];
+        sfxKeys.forEach(k => {
+            SOUND_VOLUMES[k] = DEFAULT_VOLUMES[k] * val;
+        });
+    }
+}
+
+function toggleVisualSanity(enabled) {
+    visualSanityEnabled = enabled;
+}
+
+function drawMenuBackground(dt) {
+    if (!menuBgCtx || !imgLamp.complete || !imgSmiler.complete) return;
+
+    if (menuBgCanvas.width !== menuBgCanvas.clientWidth || menuBgCanvas.height !== menuBgCanvas.clientHeight) {
+        menuBgCanvas.width = menuBgCanvas.clientWidth;
+        menuBgCanvas.height = menuBgCanvas.clientHeight;
+    }
+
+    const w = menuBgCanvas.width;
+    const h = menuBgCanvas.height;
+    const ctx = menuBgCtx;
+
+    menuFlickerState.timer -= dt;
+    if (menuFlickerState.timer <= 0) {
+        menuFlickerState.on = !menuFlickerState.on;
+        if (menuFlickerState.on) {
+            menuFlickerState.timer = Math.random() * 3 + 1; // Longer on time
+        } else {
+            menuFlickerState.timer = Math.random() * 0.2 + 0.05; // Short off time
+            if (Math.random() < 0.3) menuFlickerState.timer = Math.random() * 0.1; // Double flicker
+        }
+    }
+
+    ctx.fillStyle = '#050505';
+    ctx.fillRect(0, 0, w, h);
+
+    const lampAspect = imgLamp.width / imgLamp.height;
+    let lampH = h * 0.8;
+    let lampW = lampH * lampAspect;
+    let lampX = w * 0.65;
+    let lampY = h - lampH;
+    ctx.drawImage(imgLamp, lampX, lampY, lampW, lampH);
+
+    const smilerAspect = imgSmiler.width / imgSmiler.height;
+    let smilerH = h * 1.2;
+    let smilerW = smilerH * smilerAspect;
+    let smilerX = w * 0.1;
+    let smilerY = h - smilerH * 0.9;
+    
+    ctx.globalAlpha = menuFlickerState.on ? (0.8 + Math.random() * 0.2) : (0.05 + Math.random() * 0.1);
+    ctx.drawImage(imgSmiler, smilerX, smilerY, smilerW, smilerH);
+    ctx.globalAlpha = 1.0;
+
+    let lightX = lampX + lampW * 0.5;
+    let lightY = lampY + lampH * 0.3;
+    let lightRadius = w * 0.7;
+
+    let grad = ctx.createRadialGradient(lightX, lightY, 0, lightX, lightY, lightRadius);
+    if (menuFlickerState.on) {
+        grad.addColorStop(0, 'rgba(255, 220, 180, 0.3)');
+        grad.addColorStop(0.3, 'rgba(50, 30, 10, 0.2)');
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0.9)');
+    } else {
+        grad.addColorStop(0, 'rgba(0, 0, 0, 0.8)');
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0.95)');
+    }
+    
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+}
+
+function menuLoop(timestamp) {
+    if (!menuLastTime) menuLastTime = timestamp;
+    let dt = (timestamp - menuLastTime) / 1000;
+    menuLastTime = timestamp;
+
+    drawMenuBackground(dt);
+    menuAnimationId = requestAnimationFrame(menuLoop);
+}
+
+function startMenuAnimation() {
+    if (menuAnimationId) return;
+    menuLastTime = 0;
+    menuAnimationId = requestAnimationFrame(menuLoop);
+}
+
+function stopMenuAnimation() {
+    if (menuAnimationId) {
+        cancelAnimationFrame(menuAnimationId);
+        menuAnimationId = null;
+    }
 }
 
 async function startGame(isNewGame) {
+    stopMenuAnimation();
     try {
         await canvas.requestPointerLock();
     } catch (e) { console.warn("Pointer lock failed"); }
@@ -933,6 +1407,7 @@ async function startGame(isNewGame) {
         mapHeight = 30;
         currentLevel = 0;
         inventory = new Array(8).fill(null);
+        collectedNotes = [];
         checkpoint = { level: 0, mapWidth: 30, mapHeight: 30, inventory: [...inventory] };
         noteIndex = 0;
         lastStableDir = { x: -1, y: 0 };
@@ -1015,6 +1490,7 @@ function generateLevel() {
     steamParticles = [];
     lights = [];
     hallucinations = [];
+    silenceRadios();
     props = [];
     
     if (currentLevel === 2) {
@@ -1083,8 +1559,8 @@ function generateLevel() {
                 }
             }
         }
-    } else if (currentLevel === 1 || currentLevel === 3) {
-        // Level 1 & 3: Massive Room
+    } else if (currentLevel === 1) {
+        // Level 1: Massive Room
         // Clear the center to make a large room
         for (let x = 1; x < physicalWidth - 1; x++) {
             for (let y = 1; y < physicalHeight - 1; y++) {
@@ -1218,6 +1694,132 @@ function generateLevel() {
                 cy += (cy < ty) ? 1 : -1;
             }
         }
+    } else if (currentLevel === 3) {
+        // Level 3: Electrical Station (Rooms + Windy Tunnels)
+        let numRooms = 10;
+        let rooms = [];
+        
+        // Create Rooms
+        for(let i=0; i<numRooms; i++) {
+            let rw = Math.floor(Math.random() * 6) + 4; 
+            let rh = Math.floor(Math.random() * 6) + 4;
+            let rx = Math.floor(Math.random() * (physicalWidth - rw - 4)) + 2;
+            let ry = Math.floor(Math.random() * (physicalHeight - rh - 4)) + 2;
+            
+            rooms.push({cx: Math.floor(rx + rw/2), cy: Math.floor(ry + rh/2)});
+            
+            for(let x=rx; x<rx+rw; x++) {
+                for(let y=ry; y<ry+rh; y++) {
+                    if(x < physicalWidth-1 && y < physicalHeight-1) worldMap[x][y] = 0;
+                }
+            }
+        }
+
+        // Connect Rooms with windy paths
+        for(let i=0; i<rooms.length-1; i++) {
+            let r1 = rooms[i];
+            let r2 = rooms[i+1];
+            let cx = r1.cx;
+            let cy = r1.cy;
+            let tx = r2.cx;
+            let ty = r2.cy;
+            
+            let steps = 0;
+            while((cx !== tx || cy !== ty) && steps < 2000) {
+                steps++;
+                worldMap[cx][cy] = 0;
+                
+                let dx = tx - cx;
+                let dy = ty - cy;
+                
+                // 60% chance to move towards target, 40% chance to wander (windy)
+                if (Math.random() < 0.6) {
+                    if (Math.abs(dx) > Math.abs(dy)) cx += Math.sign(dx);
+                    else cy += Math.sign(dy);
+                } else {
+                    if (Math.random() < 0.5) cx += (Math.random() > 0.5 ? 1 : -1);
+                    else cy += (Math.random() > 0.5 ? 1 : -1);
+                }
+                
+                cx = Math.max(1, Math.min(physicalWidth-2, cx));
+                cy = Math.max(1, Math.min(physicalHeight-2, cy));
+            }
+        }
+    } else if (currentLevel === 4) {
+        // Level 4: Abandoned Office - Grid of Rooms
+        const roomGridSize = 10; 
+        const cols = Math.floor((physicalWidth - 2) / roomGridSize);
+        const rows = Math.floor((physicalHeight - 2) / roomGridSize);
+        
+        // Create grid of hallways
+        for (let c = 0; c < cols; c++) {
+            for (let r = 0; r < rows; r++) {
+                let cx = Math.floor((1 + c * roomGridSize) + roomGridSize/2);
+                let cy = Math.floor((1 + r * roomGridSize) + roomGridSize/2);
+                
+                worldMap[cx][cy] = 0;
+
+                if (c < cols - 1) {
+                    let ncx = Math.floor((1 + (c+1) * roomGridSize) + roomGridSize/2);
+                    for(let x=cx; x<=ncx; x++) worldMap[x][cy] = 0;
+                }
+                if (r < rows - 1) {
+                    let ncy = Math.floor((1 + (r+1) * roomGridSize) + roomGridSize/2);
+                    for(let y=cy; y<=ncy; y++) worldMap[cx][y] = 0;
+                }
+                
+                // Add Rooms
+                if (Math.random() < 0.7) {
+                    let roomW = Math.floor(Math.random() * (roomGridSize - 4)) + 4;
+                    let roomH = Math.floor(Math.random() * (roomGridSize - 4)) + 4;
+                    let roomX = cx - Math.floor(roomW/2);
+                    let roomY = cy - Math.floor(roomH/2);
+                    
+                    for (let x = roomX; x < roomX + roomW; x++) {
+                        for (let y = roomY; y < roomY + roomH; y++) {
+                            if (x > 0 && x < physicalWidth - 1 && y > 0 && y < physicalHeight - 1) worldMap[x][y] = 0;
+                        }
+                    }
+                    
+                    if (Math.random() > 0.4) {
+                        props.push({ x: cx + 0.5, y: cy + 0.5, type: 'table' });
+                        props.push({ x: cx + 0.5, y: cy + 0.2, type: 'chair' });
+                    }
+                }
+            }
+        }
+        
+        // Add windows to all walls, relatively evenly-spaced
+        const windowSpacing = 4;
+        for (let x = 0; x < physicalWidth; x++) {
+            for (let y = 0; y < physicalHeight; y++) {
+                if (worldMap[x][y] === 1) {
+                    // Check if it's a wall bordering an open space
+                    let isBorderWall = (x > 0 && worldMap[x-1][y] === 0) ||
+                                       (x < physicalWidth - 1 && worldMap[x+1][y] === 0) ||
+                                       (y > 0 && worldMap[x][y-1] === 0) ||
+                                       (y < physicalHeight - 1 && worldMap[x][y+1] === 0);
+
+                    if (isBorderWall) {
+                        // Check for straight walls to avoid placing windows on 1x1 pillars or outer corners.
+                        const isOpenLeft = x > 0 && worldMap[x-1][y] === 0;
+                        const isOpenRight = x < physicalWidth - 1 && worldMap[x+1][y] === 0;
+                        const isOpenUp = y > 0 && worldMap[x][y-1] === 0;
+                        const isOpenDown = y < physicalHeight - 1 && worldMap[x][y+1] === 0;
+
+                        const isVerticalWall = isOpenLeft !== isOpenRight;
+                        const isHorizontalWall = isOpenUp !== isOpenDown;
+
+                        if (isVerticalWall && !isHorizontalWall && y % windowSpacing === 1) {
+                            worldMap[x][y] = 3; // It's a window
+                        }
+                        if (isHorizontalWall && !isVerticalWall && x % windowSpacing === 1) {
+                            worldMap[x][y] = 3; // It's a window
+                        }
+                    }
+                }
+            }
+        }
     } else {
         const frontiers = [];
         let startCX = Math.floor(Math.random() * mapWidth);
@@ -1267,58 +1869,6 @@ function generateLevel() {
         }
     }
 
-    if (currentLevel === 4) {
-        let roomAttempts = Math.max(20, Math.floor(mapWidth * mapHeight * 0.15));
-        let roomsAdded = 0;
-        
-        for (let i = 0; i < roomAttempts && roomsAdded < 8; i++) { 
-            let wx = Math.floor(Math.random() * (physicalWidth - 4)) + 2;
-            let wy = Math.floor(Math.random() * (physicalHeight - 4)) + 2;
-
-            if (worldMap[wx][wy] !== 1) continue; 
-
-            let corridorDir = null;
-            if (worldMap[wx - 1][wy] === 0 && worldMap[wx + 1][wy] === 1) corridorDir = { x: 1, y: 0 }; 
-            else if (worldMap[wx + 1][wy] === 0 && worldMap[wx - 1][wy] === 1) corridorDir = { x: -1, y: 0 }; 
-            else if (worldMap[wx][wy - 1] === 0 && worldMap[wx][wy + 1] === 1) corridorDir = { x: 0, y: 1 }; 
-            else if (worldMap[wx][wy + 1] === 0 && worldMap[wx][wy - 1] === 1) corridorDir = { x: 0, y: -1 }; 
-            else continue;
-
-            let roomW = Math.floor(Math.random() * 5) + 5; 
-            let roomH = Math.floor(Math.random() * 5) + 5; 
-            let roomX = wx + corridorDir.x;
-            let roomY = wy + corridorDir.y;
-
-            if (corridorDir.x === -1) roomX -= (roomW - 1); 
-            if (corridorDir.y === -1) roomY -= (roomH - 1); 
-
-            let canPlace = true;
-            for (let x = 0; x < roomW; x++) {
-                for (let y = 0; y < roomH; y++) {
-                    let checkX = roomX + x; let checkY = roomY + y;
-                    if (checkX <= 0 || checkX >= physicalWidth - 1 || checkY <= 0 || checkY >= physicalHeight - 1 || worldMap[checkX][checkY] !== 1) {
-                        canPlace = false; break;
-                    }
-                }
-                if (!canPlace) break;
-            }
-
-            if (canPlace) {
-                for (let x = 0; x < roomW; x++) {
-                    for (let y = 0; y < roomH; y++) {
-                        worldMap[roomX + x][roomY + y] = 0; 
-                        if (x > 0 && x < roomW - 1 && y > 0 && y < roomH - 1 && (y % 2 === 1)) {
-                            props.push({ x: roomX + x + 0.5, y: roomY + y + 0.5, type: 'table' });
-                            props.push({ x: roomX + x + 0.5, y: roomY + y - 0.2, type: 'chair' });
-                        }
-                    }
-                }
-                worldMap[wx][wy] = 0; 
-                roomsAdded++;
-            }
-        }
-    }
-
     ensureConnectivity();
 
     let emptySpots = [];
@@ -1349,8 +1899,7 @@ function generateLevel() {
             let ent = { 
                 x: eSpawn.x + 0.5, 
                 y: eSpawn.y + 0.5, 
-                speed: 1.0 + (currentLevel * 0.1), 
-                speed: (currentLevel === 0 ? 0.85 : 1.0 + (currentLevel * 0.1)), 
+                speed: currentLevel === 0 ? 0.85 : 1.0 + (currentLevel * 0.1), 
                 sound: null,
                 retreatTimer: 0,
                 aggro: 0,
@@ -1387,6 +1936,7 @@ function generateLevel() {
     planeX = -dirY * 0.66; 
     planeY = dirX * 0.66;
     lastStableDir = { x: dirX, y: dirY };
+    pitch = 0;
 
     stamina = STAMINA_MAX;
     battery = BATTERY_MAX;
@@ -1446,8 +1996,36 @@ function generateLevel() {
         }
     }
 
+    // Radio Spawning - Separate pass to control count and spacing
+    let radioCount = Math.max(10, Math.floor(mapWidth * mapHeight * 0.015)); 
+    let radiosSpawned = 0;
+    let radioAttempts = 0;
+    while(radiosSpawned < radioCount && emptySpots.length > 0 && radioAttempts < 1000) {
+        radioAttempts++;
+        let idx = Math.floor(Math.random() * emptySpots.length);
+        let s = emptySpots[idx];
+        let px = s.x + 0.5;
+        let py = s.y + 0.5;
+        
+        let tooClose = props.some(p => p.type === 'radio' && ((p.x - px)**2 + (p.y - py)**2 < 25));
+        
+        if (!tooClose) {
+            emptySpots.splice(idx, 1);
+            let prop = { x: px, y: py, type: 'radio', radioType: 'static' };
+            props.push(prop);
+            radiosSpawned++;
+        }
+    }
+    
+    // Pick one random radio to start as music
+    let allRadios = props.filter(p => p.type === 'radio');
+    if (allRadios.length > 0) {
+        allRadios[Math.floor(Math.random() * allRadios.length)].radioType = 'music';
+    }
+
     let batCount = Math.max(2, Math.floor(mapWidth * mapHeight * 0.03));
     if (currentLevel === 0) batCount = Math.floor(batCount * 0.3);
+    if (currentLevel === 3) batCount = Math.floor(batCount * 0.4); 
     for(let i=0; i<batCount; i++) {
         if(emptySpots.length > 0) {
             let s = emptySpots.splice(Math.floor(Math.random() * emptySpots.length), 1)[0];
@@ -1459,6 +2037,7 @@ function generateLevel() {
 
     let energyBarCount = Math.max(3, Math.floor(mapWidth * mapHeight * 0.04));
     if (currentLevel === 0) energyBarCount = Math.floor(energyBarCount * 0.3);
+    if (currentLevel === 3) energyBarCount = Math.floor(energyBarCount * 0.4); 
     for(let i=0; i<energyBarCount; i++) {
         if(emptySpots.length > 0) {
             let s = emptySpots.splice(Math.floor(Math.random() * emptySpots.length), 1)[0];
@@ -1470,6 +2049,7 @@ function generateLevel() {
 
     let almondWaterCount = Math.max(2, Math.floor(mapWidth * mapHeight * 0.025));
     if (currentLevel === 0) almondWaterCount = Math.floor(almondWaterCount * 0.3);
+    if (currentLevel === 3) almondWaterCount = Math.floor(almondWaterCount * 0.4); 
     for(let i=0; i<almondWaterCount; i++) {
         if(emptySpots.length > 0) {
             let s = emptySpots.splice(Math.floor(Math.random() * emptySpots.length), 1)[0];
@@ -1599,32 +2179,57 @@ function triggerJumpscare() {
 function triggerGameOver() {
     gameOver = true;
     const overlay = document.getElementById('overlay');
+    const goScreen = document.getElementById('game-over-screen');
+    
     overlay.classList.remove('hidden');
-    document.querySelector('#overlay h1').innerText = "TAKEN";
-    document.getElementById('msg').innerHTML = `Don't let the light die.<br><span style="font-size:16px; color:#fff;">Click to try again.</span>`;
+    showMenu('game-over-screen');
+
+    goScreen.innerHTML = `
+        <h1 style="color:#a00">TAKEN</h1>
+        <p>Don't let the light die.</p>
+        <button class="menu-btn" onclick="restartGame()">Try Again</button>
+        <button class="menu-btn" onclick="showMenu('main-menu')">Main Menu</button>
+    `;
     
     silenceEntities();
+    silenceRadios();
     document.getElementById('note-modal').style.display = 'none';
     if (currentAmbienceNode) currentAmbienceNode.pause();
     if (menuMusicNode) {
         menuMusicNode.currentTime = 0;
         menuMusicNode.play();
     }
-    
-    overlay.onclick = () => {
-        currentLevel = checkpoint.level;
-        mapWidth = checkpoint.mapWidth;
-        mapHeight = checkpoint.mapHeight;
-        inventory = [...checkpoint.inventory];
-        noteIndex = 0;
-        generateLevel();
-        startGame(false);
-    };
+}
+
+function nextLevel() {
+    currentLevel++;
+    noteIndex = 0;
+    mapWidth = 30 + (currentLevel * 5);
+    mapHeight = 30 + (currentLevel * 5);
+
+    checkpoint.level = currentLevel;
+    checkpoint.mapWidth = mapWidth;
+    checkpoint.mapHeight = mapHeight;
+    checkpoint.inventory = [...inventory];
+
+    generateLevel();
+    startGame(false);
+}
+
+function restartGame() {
+    currentLevel = checkpoint.level;
+    mapWidth = checkpoint.mapWidth;
+    mapHeight = checkpoint.mapHeight;
+    inventory = [...checkpoint.inventory];
+    noteIndex = 0;
+    generateLevel();
+    startGame(false);
 }
 
 function jumpToLevel(levelNum) {
     if (gameOver || !running) return;
     silenceEntities();
+    silenceRadios();
 
     currentLevel = levelNum;
     noteIndex = 0;
@@ -1703,6 +2308,26 @@ function gameLoop(timestamp) {
 }
 
 function update(dt) {
+    if (currentLevel === 4) {
+        lightning.nextStrike -= dt;
+        if (lightning.nextStrike <= 0) {
+            lightning.active = true;
+            lightning.intensity = 1.0;
+            lightning.nextStrike = Math.random() * 10 + 5;
+            playSound('thunder');
+        }
+        if (lightning.active) {
+            lightning.intensity -= dt * 2.0;
+            if (lightning.intensity <= 0) {
+                lightning.intensity = 0;
+                lightning.active = false;
+            }
+        }
+    } else {
+        lightning.intensity = 0;
+        lightning.active = false;
+    }
+
     if (currentLevel === 0 && turnEventCooldown <= 0) {
         const dot = dirX * lastStableDir.x + dirY * lastStableDir.y;
         if (dot > 0.5) {
@@ -1755,6 +2380,37 @@ function update(dt) {
         }
     }
 
+    // Update Radio Sounds
+    props.forEach(prop => {
+        if (prop.type === 'radio') {
+            let dx = posX - prop.x;
+            let dy = posY - prop.y;
+            let dist = Math.sqrt(dx*dx + dy*dy);
+            
+            if (prop.radioType === 'music' && !prop.sound) {
+                initRadioSound(prop);
+            }
+
+            if (dist < 15) {
+                if (!prop.sound) initRadioSound(prop);
+                if (!prop.sound) return; // Safety check if init failed
+                
+                let vol = (1 - (dist / 15));
+                vol = vol * vol; 
+                
+                if (prop.sound.type === 'element') {
+                    if (prop.radioType === 'music') {
+                        prop.sound.element.volume = vol * SOUND_VOLUMES.radioMusic;
+                    } else { // static
+                        prop.sound.element.volume = vol * SOUND_VOLUMES.radioStatic;
+                    }
+                }
+            } else if (prop.sound) {
+                if (prop.sound.type === 'element') prop.sound.element.volume = 0;
+            }
+        }
+    });
+
     let insanity = (SANITY_MAX - sanity) / SANITY_MAX;
     if (insanity > 0.3 && Math.random() < (insanity - 0.3) * dt * 0.5) {
         if (hallucinations.length < 4) { 
@@ -1804,7 +2460,7 @@ function update(dt) {
             baseFlicker = 1.0 - (noise * deviation);
 
             if (audioCtx && flashlightHum.gain && lightMode === 1) {
-                let vol = 0.01 + (jitterIntensity * 0.04 * noise);
+                let vol = SOUND_VOLUMES.flashlight + (jitterIntensity * 0.04 * noise);
                 flashlightHum.gain.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.1);
                 let pitch = 50 + (jitterIntensity * 10 * noise) + (Math.random() * 5);
                 flashlightHum.osc.frequency.setTargetAtTime(pitch, audioCtx.currentTime, 0.1);
@@ -1941,25 +2597,18 @@ function update(dt) {
         if (dx*dx + dy*dy < 0.5) {
             running = false;
             silenceEntities();
+            silenceRadios();
             document.exitPointerLock();
             const overlay = document.getElementById('overlay');
+            const goScreen = document.getElementById('game-over-screen');
             overlay.classList.remove('hidden');
-            document.querySelector('#overlay h1').innerText = "ESCAPED";
-            document.getElementById('msg').innerHTML = `The shadow hungers still.<br><span style="font-size:16px; color:#fff;">Click to descend deeper.</span>`;
-            overlay.onclick = () => {
-                currentLevel++;
-                noteIndex = 0;
-                mapWidth += 5;
-                mapHeight += 5;
-
-                checkpoint.level = currentLevel;
-                checkpoint.mapWidth = mapWidth;
-                checkpoint.mapHeight = mapHeight;
-                checkpoint.inventory = [...inventory];
-
-                generateLevel();
-                startGame(false);
-            };
+            showMenu('game-over-screen');
+            
+            goScreen.innerHTML = `
+                <h1 style="color:#0a0">ESCAPED</h1>
+                <p>The shadow hungers still.</p>
+                <button class="menu-btn" onclick="nextLevel()">Descend Deeper</button>
+            `;
             return;
         }
     }
@@ -2125,12 +2774,12 @@ function update(dt) {
                 vol = (1 - (dist / 10)); 
                 vol = vol * vol; 
             }
-            entity.sound.gain.gain.setTargetAtTime(vol * 0.2, audioCtx.currentTime, 0.1);
+            entity.sound.gain.gain.setTargetAtTime(vol * SOUND_VOLUMES.entity, audioCtx.currentTime, 0.1);
 
             let panX = dirX * dx + dirY * dy; 
             let panY = planeX * dx + planeY * dy; 
             
-            let cross = dirX * dy - dirY * dx;
+            let cross = dirY * dx - dirX * dy;
             entity.sound.panner.pan.value = Math.max(-1, Math.min(1, cross));
         }
     });
@@ -2165,7 +2814,7 @@ function update(dt) {
         let cutoff = 22000 - (insanity * 18000);
         masterFilter.frequency.setTargetAtTime(cutoff, audioCtx.currentTime, 0.1);
 
-        let hbVol = 0.02 + (0.1 * insanity);
+        let hbVol = (SOUND_VOLUMES.heartbeat * 0.1) + (SOUND_VOLUMES.heartbeat * insanity);
         let hbRate = 1.0 + (insanity * 2.0); 
         heartbeat.gain.gain.setTargetAtTime(insanity > 0.1 ? hbVol : 0, audioCtx.currentTime, 0.1);
         heartbeat.osc.frequency.setTargetAtTime(hbRate, audioCtx.currentTime, 0.1);
@@ -2182,8 +2831,13 @@ function showNextNote() {
         isPaused = true;
         document.exitPointerLock();
         const modal = document.getElementById('note-modal');
-        document.getElementById('note-text').innerText = notes[noteIndex];
+        const noteText = notes[noteIndex];
+        document.getElementById('note-text').innerText = noteText;
         modal.style.display = 'block';
+
+        if (!collectedNotes.some(n => n.text === noteText)) {
+            collectedNotes.push({ level: currentLevel, text: noteText });
+        }
         noteIndex++;
     }
 }
@@ -2229,18 +2883,18 @@ function draw() {
     ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
 
     ctx.save();
-    if (screenShake > 0.1) {
+    if (visualSanityEnabled && screenShake > 0.1) {
         let sx = (Math.random() - 0.5) * screenShake;
         let sy = (Math.random() - 0.5) * screenShake;
         ctx.translate(sx, sy);
     }
 
-    let horizon = SCREEN_HEIGHT / 2 + headBobOffset;
+    let horizon = SCREEN_HEIGHT / 2 + headBobOffset + pitch;
     let style = LEVEL_STYLES[currentLevel % LEVEL_STYLES.length];
     let insanity = (SANITY_MAX - sanity) / SANITY_MAX;
     let lightFactorBase = (lightMode === 1) ? 1.0 * flashLightFlicker : (lightMode === 2 ? 2.0 : 0.5);
 
-    const CHUNK_SIZE = 16; 
+    const CHUNK_SIZE = 24; 
 
     for (let y = 0; y < horizon; y++) {
         let p = horizon - y;
@@ -2266,7 +2920,6 @@ function draw() {
 
             if (lightMode === 2) {
                 let lum = (r * 0.3 + g * 0.59 + b * 0.11);
-                r = lum * 0.1; g = lum * 0.8; b = lum * 0.1;
                 r = lum * 0.1; g = lum * 0.4; b = lum * 0.15;
             }
 
@@ -2308,7 +2961,6 @@ function draw() {
 
             if (lightMode === 2) {
                 let lum = (r * 0.3 + g * 0.59 + b * 0.11);
-                r = lum * 0.1; g = lum * 0.8; b = lum * 0.1;
                 r = lum * 0.1; g = lum * 0.4; b = lum * 0.15;
             }
 
@@ -2353,7 +3005,7 @@ function draw() {
         let lineHeight = Math.floor(SCREEN_HEIGHT / perpWallDist);
         
         let glitchY = 0;
-        if (insanity > 0.5 && Math.random() < (insanity - 0.5) * 0.1) glitchY = (Math.random() - 0.5) * SCREEN_HEIGHT * 0.2;
+        if (visualSanityEnabled && insanity > 0.5 && Math.random() < (insanity - 0.5) * 0.1) glitchY = (Math.random() - 0.5) * SCREEN_HEIGHT * 0.2;
 
         let drawStart = -lineHeight / 2 + horizon + glitchY;
         if (drawStart < 0) drawStart = 0;
@@ -2409,6 +3061,9 @@ function draw() {
         } else if (lightMode === 2) {
             lightFactor = 2.0;
         }
+        if (currentLevel === 4) {
+            lightFactor += lightning.intensity * 0.8;
+        }
 
         let r = baseR * distFactor * lightFactor;
         let g = baseG * distFactor * lightFactor; 
@@ -2423,12 +3078,29 @@ function draw() {
 
         if (lightMode === 2) {
             let lum = (r * 0.3 + g * 0.59 + b * 0.11);
-            r = lum * 0.1; g = lum * 0.8; b = lum * 0.1;
             r = lum * 0.1; g = lum * 0.4; b = lum * 0.15;
         }
 
         ctx.fillStyle = `rgb(${Math.floor(r)}, ${Math.floor(g)}, ${Math.floor(b)})`;
         ctx.fillRect(x, drawStart, 1, drawEnd - drawStart);
+
+        if (currentLevel === 4 && worldMap[mapX][mapY] === 3) {
+            let wallX;
+            if (side === 0) wallX = posY + perpWallDist * rayDirY;
+            else           wallX = posX + perpWallDist * rayDirX;
+            wallX -= Math.floor(wallX);
+            
+            if (wallX < 0.05 || wallX > 0.95 || (wallX > 0.48 && wallX < 0.52)) {
+                ctx.fillStyle = '#222'; // Frame
+            } else {
+                let flash = lightning.intensity * 200;
+                let wr = 10 + flash;
+                let wg = 15 + flash;
+                let wb = 30 + flash * 1.2;
+                ctx.fillStyle = `rgb(${Math.floor(wr)}, ${Math.floor(wg)}, ${Math.floor(wb)})`;
+            }
+            ctx.fillRect(x, drawStart, 1, drawEnd - drawStart);
+        }
 
         if (currentLevel === 2) {
             let pr = 120 * distFactor * lightFactor;
@@ -2437,7 +3109,6 @@ function draw() {
             
             if (lightMode === 2) {
                 let lum = (pr * 0.3 + pg * 0.59 + pb * 0.11);
-                pr = lum * 0.1; pg = lum * 0.8; pb = lum * 0.1;
                 pr = lum * 0.1; pg = lum * 0.4; pb = lum * 0.15;
             }
 
@@ -2461,7 +3132,6 @@ function draw() {
             let mr = r*0.6, mg = g*0.6, mb = b*0.6;
             if (lightMode === 2) {
                 let lum = (mr * 0.3 + mg * 0.59 + mb * 0.11);
-                mr = lum * 0.1; mg = lum * 0.8; mb = lum * 0.1;
                 mr = lum * 0.1; mg = lum * 0.4; mb = lum * 0.15;
             }
 
@@ -2559,6 +3229,7 @@ function draw() {
         else if (sprite.type === 'chair' && imgChair.complete && imgChair.naturalWidth > 0) imgToDraw = imgChair;
         else if (sprite.type === 'lamp' && imgLamp.complete && imgLamp.naturalWidth > 0) imgToDraw = imgLamp;
         else if (sprite.type === 'plant' && imgPlant.complete && imgPlant.naturalWidth > 0) imgToDraw = imgPlant;
+        else if (sprite.type === 'radio' && imgRadio.complete && imgRadio.naturalWidth > 0) imgToDraw = imgRadio;
 
         let floorAlignOffset = 0;
         if (imgToDraw) {
@@ -2569,6 +3240,7 @@ function draw() {
             else if (sprite.type === 'table') scale = 0.8;
             else if (sprite.type === 'chair') scale = 0.7;
             else if (sprite.type === 'energy_bar' || sprite.type === 'plant') scale = 0.5;
+            else if (sprite.type === 'radio') scale = 0.3;
             else scale = 0.4; 
 
             if (aspect > 1) { 
@@ -2631,7 +3303,6 @@ function draw() {
                             if (lightMode === 2) {
                                 // Manual green tint for sprites in NV
                                 ctx.save();
-                                ctx.filter = 'grayscale(100%) sepia(100%) hue-rotate(90deg) saturate(150%) brightness(0.8)';
                                 ctx.filter = 'grayscale(100%) sepia(100%) hue-rotate(90deg) saturate(50%) brightness(0.6)';
                                 ctx.drawImage(imgToDraw, texX, sY, 1, sH, stripe, drawStartY, 1, dHeight);
                                 ctx.restore();
@@ -2715,13 +3386,13 @@ function draw() {
         ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
     }
     
-    if (insanity > 0.2) {
+    if (visualSanityEnabled && insanity > 0.2) {
         ctx.fillStyle = `rgba(0,0,0,${(insanity - 0.2) * 0.8})`;
         ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
     }
 
     // VHS Lines
-    if (insanity > 0) {
+    if (visualSanityEnabled && insanity > 0) {
         ctx.fillStyle = `rgba(255, 255, 255, ${insanity * 0.15})`;
         let lineCount = Math.floor(SCREEN_HEIGHT / 4);
         for (let i = 0; i < lineCount; i++) {
