@@ -5,7 +5,6 @@
     <title>Backrooms Horror Game</title>
     <style>
         body { margin: 0; padding: 0; background: #000; overflow: hidden; color: #fff; font-family: 'Courier New', monospace; user-select: none; }
-        canvas { display: block; width: 100%; height: 100%; cursor: none; }
         canvas { display: block; width: 100%; height: 100%; }
         #game, #scare-canvas { cursor: none; }
         
@@ -344,7 +343,7 @@ const STAMINA_MAX = 100;
 const SANITY_DRAIN = 8.0; 
 const SANITY_MAX = 100;
 
-const BATTERY_DRAIN = 5.0;     
+const BATTERY_DRAIN = 2.0;     
 const BATTERY_RECHARGE = 0;  
 const BATTERY_MAX = 100;
 
@@ -495,14 +494,14 @@ let masterGain = null;
 
 const DEFAULT_VOLUMES = {
     master: 0.4,       // Master volume scaler
-    menu: 0.3,         // Menu music
+    menu: 0.5,         // Menu music
     ambience: 1.0,     // Background hum/ambience
     heartbeat: 0.4,    // Heartbeat max volume
     flashlight: 0.02,  // Flashlight hum
     entity: 0.2,       // Entity idle sound
     orb: 0.1,          // Note pickup
     click: 0.05,       // UI Click
-    jumpscare: 2.5,    // Jumpscare noise
+    jumpscare: 2.5,      // Jumpscare noise
     door: 0.1,         // Exit open sound
     battery: 0.05,     // Battery pickup
     energy: 0.05,      // Energy bar pickup
@@ -513,7 +512,7 @@ const DEFAULT_VOLUMES = {
     distant_step: 0.4, // Distant scary sounds
     radioMusic: 0.3,   // Radio music
     radioStatic: 0.03,  // Radio static
-    thunder: 1.5         // Thunder on level 4
+    thunder: 1         // Thunder on level 4
 };
 
 let SOUND_VOLUMES = { ...DEFAULT_VOLUMES };
@@ -569,6 +568,7 @@ let menuFlickerState = {
 let menuLastTime = 0;
 let sanity = SANITY_MAX;
 let visualSanityEnabled = true;
+let sanityRegenTimer = 0;
 
 // Input
 const keys = { w: false, a: false, s: false, d: false, shift: false };
@@ -1132,7 +1132,7 @@ function useItem(index) {
         stamina = Math.min(STAMINA_MAX, stamina + 50);
         playSound('energy_bar');
     } else if (item === 'almond_water') {
-        sanity = Math.min(SANITY_MAX, sanity + 40);
+        sanityRegenTimer += 5.0;
         playSound('almond_water');
     }
     inventory[index] = null;
@@ -1941,6 +1941,7 @@ function generateLevel() {
     stamina = STAMINA_MAX;
     battery = BATTERY_MAX;
     sanity = SANITY_MAX;
+    sanityRegenTimer = 0;
     lightMode = 0;
     exitOpen = false;
 
@@ -2308,6 +2309,11 @@ function gameLoop(timestamp) {
 }
 
 function update(dt) {
+    if (sanityRegenTimer > 0) {
+        sanityRegenTimer -= dt;
+        sanity = Math.min(SANITY_MAX, sanity + 8.0 * dt);
+    }
+
     if (currentLevel === 4) {
         lightning.nextStrike -= dt;
         if (lightning.nextStrike <= 0) {
